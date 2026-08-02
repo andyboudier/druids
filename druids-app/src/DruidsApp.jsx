@@ -2618,12 +2618,23 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
   // Shirt colour belongs to the team, not to one match. Captains set it once on
   // the live scoreboard and every later match involving that squad inherits it.
-  const rememberTeamColour = (teamName, colourKey) => {
+  // Set (or clear, with a null key) the shirt colour a squad plays in. The
+  // captain can pick it on the team board before a ball is thrown in; the live
+  // scoreboard writes the same field when a colour is chosen there.
+  const setTeamColour = (teamName, colourKey) => {
     const key = (teamName || '').trim().toLowerCase();
-    if (!key || !colourKey) return;
+    if (!key) return;
     const prev = teamsDb[key] || { name: teamName.trim(), handicap: null, players: [] };
-    if (prev.colour === colourKey) return;
-    saveTeamsDb({ ...teamsDb, [key]: { ...prev, colour: colourKey } });
+    if ((prev.colour || null) === (colourKey || null)) return;
+    const entry = { ...prev };
+    if (colourKey) entry.colour = colourKey; else delete entry.colour;
+    saveTeamsDb({ ...teamsDb, [key]: entry });
+  };
+  // Live scoring only ever assigns a colour, never clears one, so a blank key
+  // there means "nothing was chosen" rather than "unset it".
+  const rememberTeamColour = (teamName, colourKey) => {
+    if (!colourKey) return;
+    setTeamColour(teamName, colourKey);
   };
   // The colour a squad last wore, if any.
   const teamColourKey = (teamName) => {
@@ -4549,6 +4560,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               teamColourKey={teamColourKey}
               saveTeam={saveTeamEntry}
               deleteTeam={deleteTeamEntry}
+              setTeamColour={setTeamColour}
               interestCount={(interest[fx.id] || []).length}
               interestClosesAt={interestClosesAt(fx)}
               interestClosed={isInterestClosed(fx)}
