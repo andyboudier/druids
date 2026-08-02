@@ -147,23 +147,28 @@ needs a keystore plus Play Console signing secrets in the repository's
 | Tournament committee on PDFs | `DEFAULT_COMMITTEE` in `src/tournamentPdf.js` |
 | Club quote / masthead | the `<blockquote>` in `src/DruidsApp.jsx` |
 
-## Replacing the crest
+## Artwork
 
-`public/crest.svg` is a hand-built interpretation of the club logo (crossed
-mallets and four golden sickles) drawn to match the club's colours. To drop in
-the official artwork:
+`public/crest.svg`, `public/crest-dark.svg` and `public/wordmark.svg` are the
+club's **official** artwork, extracted from the logo on druidspolo.co.uk. The
+paths are unmodified — only the enclosing viewBox differs, so the crest and the
+wordmark can be placed independently. `crest-dark.svg` is the dark-on-white
+variant used on the white PDF programme pages.
 
-1. Replace `public/crest.svg` with the real file (square, transparent
-   background, white/light marks so it reads on the black header).
-2. Update `public/crest-dark.svg` to match — that is the dark-on-white variant
-   used on the white PDF programme pages.
-3. Regenerate every raster (PWA icons, favicon, Apple touch icon, iOS AppIcon
-   set and splash, Watch icon, Android launcher icons and splashes):
+If the artwork is ever updated:
+
+1. Replace `public/crest.svg` (and `crest-dark.svg` to match).
+2. Regenerate every raster — PWA icons, favicon, Apple touch icon, the iOS
+   AppIcon set and splash, the Watch icon, and the Android launcher icons and
+   splashes:
    ```sh
    cd druids-app
    npm install --no-save sharp
    node scripts/generate-icons.mjs
    ```
-4. Re-embed the PDF crest: render `public/crest-dark.svg` to a 512×512 PNG,
+3. Re-embed the PDF crest: render `public/crest-dark.svg` to a 512×512 PNG,
    base64-encode it, and replace the `DLPC_CREST` data URI at the top of
    `src/tournamentPdf.js`.
+
+Brand colours, taken from the logo file: `#231F20` ink, `#FBB415` gold,
+`#FEFEFE` white.

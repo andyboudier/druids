@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'dist', // Vite's default build output
   ios: {
     contentInset: 'always',
-    backgroundColor: '#1B1919',
+    backgroundColor: '#231F20',
     // Allow Firestore + FCM long-lived connections through the WebView
     limitsNavigationsToAppBoundDomains: false,
     // Prevent gesture-based navigation overriding our React Router
@@ -26,7 +26,7 @@ const config: CapacitorConfig = {
     SplashScreen: {
       launchShowDuration: 1500,
       launchAutoHide: true,
-      backgroundColor: '#1B1919', // club ink
+      backgroundColor: '#231F20', // club ink
       showSpinner: false,
       splashImmersive: true,
     },
@@ -35,7 +35,7 @@ const config: CapacitorConfig = {
     },
     StatusBar: {
       style: 'DARK', // light text/icons on the black header
-      backgroundColor: '#1B1919',
+      backgroundColor: '#231F20',
       overlaysWebView: false,
     },
     FirebaseMessaging: {

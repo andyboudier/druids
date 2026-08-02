@@ -131,7 +131,7 @@ in a single Firestore record:
   local bundle (friendlier for App Store review), comment out the `url` + cleartext
   lines and ship `webDir: dist`.
 - Splash / status bar are configured on a cream (`#FAF9F7`) background; the iOS
-  content background is club claret (`#1B1919`).
+  content background is club claret (`#231F20`).
 
 ### iOS Live Activity
 

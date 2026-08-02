@@ -19,6 +19,8 @@ What it does:
   lessons and payment tracking.
 - **Captain mode** — a PIN-gated editing mode; everyone else sees a read-only view.
 
+Brand colours are the club's own: `#231F20` ink, `#FBB415` gold, white.
+
 British spelling throughout: *colour*, *programme*, *chukkas*.
 
 Total hosting cost: **£0/month** on Firebase's and Vercel's free tiers.

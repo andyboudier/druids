@@ -17,7 +17,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CREST = resolve(ROOT, 'public/crest.svg');
 
 // Club palette — keep in step with the CSS variables in src/DruidsApp.jsx.
-const INK = { r: 0x1b, g: 0x19, b: 0x19, alpha: 1 };
+const INK = { r: 0x23, g: 0x1f, b: 0x20, alpha: 1 };
 
 const out = (p) => resolve(ROOT, p);
 

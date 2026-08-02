@@ -184,7 +184,7 @@ struct ContentView: View {
 
 struct TopTabs: View {
     @Binding var selection: AppTab
-    private let clubGold = Color(red: 0.992, green: 0.710, blue: 0.082)  // #FDB515
+    private let clubGold = Color(red: 0.984, green: 0.706, blue: 0.082)  // #FBB415
 
     var body: some View {
         HStack(spacing: 3) {
@@ -253,7 +253,7 @@ struct ChukkasScreen: View {
 
 struct DayPicker: View {
     @Binding var day: ChukkaDay
-    private let clubGold = Color(red: 0.992, green: 0.710, blue: 0.082)  // #FDB515
+    private let clubGold = Color(red: 0.984, green: 0.706, blue: 0.082)  // #FBB415
 
     var body: some View {
         HStack(spacing: 3) {

@@ -257,10 +257,10 @@ const fmtH = (h) => h < 0 ? `−${Math.abs(h)}` : `${h}`;
 // Shirt colours a team can play in on the live scoreboard (captain-set).
 const TEAM_COLOURS = [
   { key: 'blue',   name: 'Blue',   hex: '#2f5c99', text: '#ffffff' },
-  { key: 'white',  name: 'White',  hex: '#f4f1ea', text: '#1B1919' },
+  { key: 'white',  name: 'White',  hex: '#f4f1ea', text: '#231F20' },
   { key: 'red',    name: 'Red',    hex: '#a5322b', text: '#ffffff' },
   { key: 'green',  name: 'Green',  hex: '#3f6b47', text: '#ffffff' },
-  { key: 'yellow', name: 'Yellow', hex: '#e0b83a', text: '#1B1919' },
+  { key: 'yellow', name: 'Yellow', hex: '#e0b83a', text: '#231F20' },
   { key: 'pink',   name: 'Pink',   hex: '#d97a94', text: '#ffffff' },
   { key: 'navy',   name: 'Navy',   hex: '#1e2f4d', text: '#ffffff' },
   { key: 'black',  name: 'Black',  hex: '#2a2a2a', text: '#ffffff' },
@@ -2184,12 +2184,12 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     const sortedPlayers = [...players].sort((a, b) => b.handicap - a.handicap);
     const dateStr = getDateStr();
 
-    const headerDate = `style="background-color:#1B1919; color:#FAF9F7; font-family:Georgia,serif; font-style:italic; font-weight:500; text-align:center; padding:10px; border:1px solid #DEDAD3; font-size:13px;"`;
-    const headerTime = `style="background-color:#EFEDE8; color:#1B1919; font-weight:600; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:12px; mso-number-format:'\\@';"`;
-    const headerCol = `style="background-color:#1B1919; color:#FAF9F7; font-weight:500; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:11px;"`;
-    const headerChukka = `style="background-color:#EFEDE8; color:#1B1919; font-weight:500; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:11px;"`;
-    const cellB = `style="background-color:#1B1919; color:#FFFFFF; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
-    const cellW = `style="background-color:#FFFFFF; color:#1B1919; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
+    const headerDate = `style="background-color:#231F20; color:#FAF9F7; font-family:Georgia,serif; font-style:italic; font-weight:500; text-align:center; padding:10px; border:1px solid #DEDAD3; font-size:13px;"`;
+    const headerTime = `style="background-color:#EFEDE8; color:#231F20; font-weight:600; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:12px; mso-number-format:'\\@';"`;
+    const headerCol = `style="background-color:#231F20; color:#FAF9F7; font-weight:500; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:11px;"`;
+    const headerChukka = `style="background-color:#EFEDE8; color:#231F20; font-weight:500; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:11px;"`;
+    const cellB = `style="background-color:#231F20; color:#FFFFFF; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
+    const cellW = `style="background-color:#FFFFFF; color:#231F20; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
     const cellEmpty = `style="background-color:#ffffff; padding:8px; border:1px solid #DEDAD3;"`;
 
     let html = '';
@@ -2223,9 +2223,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     sortedPlayers.forEach((p, idx) => {
       const altBg = idx % 2 === 1 ? '#FFFFFF' : '#ffffff';
       html += `<tr>`;
-      html += `<td style="background-color:${altBg}; padding:8px 12px; font-weight:500; color:#1B1919; border:1px solid #DEDAD3; font-size:12px;">${p.name}</td>`;
-      html += `<td style="background-color:#ffffff; text-align:center; padding:8px; color:#1B1919; border:1px solid #DEDAD3; font-size:12px;">${fmtH(p.handicap)}</td>`;
-      html += `<td style="background-color:#ffffff; text-align:center; padding:8px; color:#1B1919; border:1px solid #DEDAD3; font-size:12px;">${p.chukkas}</td>`;
+      html += `<td style="background-color:${altBg}; padding:8px 12px; font-weight:500; color:#231F20; border:1px solid #DEDAD3; font-size:12px;">${p.name}</td>`;
+      html += `<td style="background-color:#ffffff; text-align:center; padding:8px; color:#231F20; border:1px solid #DEDAD3; font-size:12px;">${fmtH(p.handicap)}</td>`;
+      html += `<td style="background-color:#ffffff; text-align:center; padding:8px; color:#231F20; border:1px solid #DEDAD3; font-size:12px;">${p.chukkas}</td>`;
       schedule.chukkas.forEach(ck => {
         const inA = ck.teamA.find(x => x.id === p.id);
         const inB = ck.teamB.find(x => x.id === p.id);
@@ -2285,7 +2285,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     ctx.fillRect(0, 0, W, H);
 
     // Title block
-    ctx.fillStyle = '#1B1919';
+    ctx.fillStyle = '#231F20';
     ctx.font = '500 22px Georgia, "Times New Roman", serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -2299,7 +2299,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     let y = padding + titleH;
 
     // Row 1: date (merged across cols 0–2) + time headers
-    ctx.fillStyle = '#1B1919';
+    ctx.fillStyle = '#231F20';
     ctx.fillRect(tx, y, nameW + hcpW + chukkasW, headerRowH);
     ctx.fillStyle = '#FAF9F7';
     ctx.font = 'italic 500 13px Georgia, serif';
@@ -2309,14 +2309,14 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       const cx = tx + nameW + hcpW + chukkasW + i * chukkaW;
       ctx.fillStyle = '#EFEDE8';
       ctx.fillRect(cx, y, chukkaW, headerRowH);
-      ctx.fillStyle = '#1B1919';
+      ctx.fillStyle = '#231F20';
       ctx.font = '600 12px -apple-system, "Helvetica Neue", Arial, sans-serif';
       ctx.fillText(ck.time, cx + chukkaW / 2, y + headerRowH / 2);
     });
     y += headerRowH;
 
     // Row 2: column labels
-    ctx.fillStyle = '#1B1919';
+    ctx.fillStyle = '#231F20';
     ctx.fillRect(tx, y, nameW + hcpW + chukkasW, headerRowH);
     ctx.fillStyle = '#FAF9F7';
     ctx.font = '500 11px -apple-system, "Helvetica Neue", Arial, sans-serif';
@@ -2327,7 +2327,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       const cx = tx + nameW + hcpW + chukkasW + i * chukkaW;
       ctx.fillStyle = '#EFEDE8';
       ctx.fillRect(cx, y, chukkaW, headerRowH);
-      ctx.fillStyle = '#1B1919';
+      ctx.fillStyle = '#231F20';
       ctx.fillText(`CHUKKA ${i + 1}`, cx + chukkaW / 2, y + headerRowH / 2);
     });
     y += headerRowH;
@@ -2339,7 +2339,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       // Name column (alt row shade)
       ctx.fillStyle = isAlt ? '#FFFFFF' : '#ffffff';
       ctx.fillRect(tx, y, nameW, rowH);
-      ctx.fillStyle = '#1B1919';
+      ctx.fillStyle = '#231F20';
       ctx.font = '500 13px -apple-system, "Helvetica Neue", Arial, sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText(p.name, tx + 12, y + rowH / 2);
@@ -2347,7 +2347,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       // HCP + Chukkas columns
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(tx + nameW, y, hcpW + chukkasW, rowH);
-      ctx.fillStyle = '#1B1919';
+      ctx.fillStyle = '#231F20';
       ctx.font = '500 13px -apple-system, "Helvetica Neue", Arial, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(fmtH(p.handicap), tx + nameW + hcpW / 2, y + rowH / 2);
@@ -2365,9 +2365,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           ctx.font = '700 15px Georgia, serif';
           ctx.fillText('B', cx + chukkaW / 2, y + rowH / 2);
         } else if (inB) {
-          ctx.fillStyle = 'rgba(253, 181, 21, 0.14)';
+          ctx.fillStyle = 'rgba(251, 180, 21, 0.14)';
           ctx.fillRect(cx, y, chukkaW, rowH);
-          ctx.fillStyle = '#1B1919';
+          ctx.fillStyle = '#231F20';
           ctx.font = '700 15px Georgia, serif';
           ctx.fillText('W', cx + chukkaW / 2, y + rowH / 2);
         } else {
@@ -3144,15 +3144,15 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Outfit:wght@300;400;500;600;700&display=swap');
 
         .polo-app {
-          --burgundy: #1B1919;
+          --burgundy: #231F20;
           --burgundy-deep: #0D0C0C;
           --burgundy-soft: #3A3634;
           --cream: #FAF9F7;
           --cream-warm: #EFEDE8;
           --cream-pale: #FFFFFF;
           --gold: #C9910F;
-          --gold-bright: #FDB515;
-          --ink: #1B1919;
+          --gold-bright: #FBB415;
+          --ink: #231F20;
           --muted: #6B6663;
           --line: #DEDAD3;
           --danger: #B3261E;
@@ -3190,8 +3190,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           position: absolute;
           inset: 0;
           background-image:
-            radial-gradient(circle at 18% 28%, rgba(253, 181, 21, 0.10) 0%, transparent 55%),
-            radial-gradient(circle at 82% 78%, rgba(253, 181, 21, 0.06) 0%, transparent 45%);
+            radial-gradient(circle at 18% 28%, rgba(251, 180, 21, 0.10) 0%, transparent 55%),
+            radial-gradient(circle at 82% 78%, rgba(251, 180, 21, 0.06) 0%, transparent 45%);
           pointer-events: none;
         }
         .ornament {
@@ -3207,7 +3207,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           display: flex;
           background: var(--burgundy-deep);
           padding: 0;
-          border-bottom: 1px solid rgba(253, 181, 21, 0.4);
+          border-bottom: 1px solid rgba(251, 180, 21, 0.4);
           position: sticky;
           top: 0;
           z-index: 10;
@@ -3956,7 +3956,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           font-family: 'Fraunces', serif;
         }
         .captain-table .white-cell {
-          background: rgba(253, 181, 21, 0.10);
+          background: rgba(251, 180, 21, 0.10);
           color: var(--burgundy);
           font-weight: 700;
           font-family: 'Fraunces', serif;
@@ -4921,7 +4921,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     <button
                       type="button"
                       onClick={() => setPrivacyOpen(true)}
-                      style={{ background: 'none', border: 'none', padding: 0, color: 'var(--burgundy, #1B1919)', cursor: 'pointer', textDecoration: 'underline', fontSize: '11px', fontFamily: 'inherit' }}
+                      style={{ background: 'none', border: 'none', padding: 0, color: 'var(--burgundy, #231F20)', cursor: 'pointer', textDecoration: 'underline', fontSize: '11px', fontFamily: 'inherit' }}
                     >
                       Privacy notice
                     </button>
@@ -5154,7 +5154,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                       width: '100%',
                       background: 'transparent',
                       border: '1px solid rgba(107, 31, 42, 0.25)',
-                      color: '#1B1919',
+                      color: '#231F20',
                       padding: '10px 14px',
                       borderRadius: '6px',
                       fontSize: '12px',
@@ -7389,7 +7389,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             borderRadius: '50%',
             background: '#ffffff',
             border: '1px solid rgba(107, 31, 42, 0.6)',
-            color: 'var(--burgundy, #1B1919)',
+            color: 'var(--burgundy, #231F20)',
             fontSize: '20px',
             fontWeight: 600,
             lineHeight: 1,
@@ -7464,7 +7464,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     disabled={pinInput.length !== 4}
                     style={{
                       flex: 1,
-                      background: pinInput.length === 4 ? '#1B1919' : '#bbb',
+                      background: pinInput.length === 4 ? '#231F20' : '#bbb',
                       color: '#FAF9F7',
                       border: 'none',
                       padding: '12px 14px',
@@ -7586,7 +7586,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                   onClick={() => setPrivacyOpen(false)}
                   style={{
                     width: '100%',
-                    background: '#1B1919',
+                    background: '#231F20',
                     color: '#FAF9F7',
                     border: 'none',
                     padding: '12px 14px',
@@ -7625,7 +7625,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     onClick={() => { confirmModal.onConfirm(); setConfirmModal(null); }}
                     style={{
                       flex: 1,
-                      background: '#1B1919',
+                      background: '#231F20',
                       color: '#FAF9F7',
                       border: 'none',
                       padding: '12px 14px',
