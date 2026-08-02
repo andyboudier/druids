@@ -138,7 +138,7 @@ needs a keystore plus Play Console signing secrets in the repository's
 
 | What | Where |
 |---|---|
-| Captain PIN (currently `2222`) | `CAPTAIN_PIN` in `src/DruidsApp.jsx` |
+| Captain PIN (currently `2004`) | `CAPTAIN_PIN` in `src/DruidsApp.jsx` |
 | Contact email | `CONTACT_EMAIL` in `src/DruidsApp.jsx` |
 | Chukka days & throw-in times | `DAY_CONFIG` / `DAY_KEYS` / `CHUKKA_START_MIN_*` |
 | Ground names | `GROUND_OPTIONS` — `'Arena'` triggers the 3-a-side draw |

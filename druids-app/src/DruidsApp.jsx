@@ -113,6 +113,14 @@ const MEMBERSHIP_TYPES_2026 = [
   { id: 'family',        label: 'Further Family Member',                  chukkasIncluded: true },
   { id: 'student-full',  label: 'Full Student Membership (U23)',          chukkasIncluded: true,  student: true },
   { id: 'excl-chukkas',  label: 'Membership excluding chukka fees',       chukkasIncluded: false },
+  // Categories on the club's member list that the printed price card does not
+  // cover. `chukkasIncluded: false` is a deliberately cautious default: it sends
+  // the booking to checkout, where the captain sees the charge and can waive it.
+  // Setting it true instead would silently skip the fee — an invisible error
+  // rather than a visible one. Flip these once the club confirms the terms.
+  { id: 'chukka-umpire', label: 'Chukka & Umpire',                        chukkasIncluded: false },
+  { id: 'u18',           label: '18 and Under',                           chukkasIncluded: false },
+  { id: 'pony-club',     label: 'Pony Club',                              chukkasIncluded: false },
 ];
 const membershipById = (id) => MEMBERSHIP_TYPES_2026.find(m => m.id === id) || MEMBERSHIP_TYPES_2026[0];
 
@@ -891,7 +899,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Captain PIN — visible in source, this is a soft gate not real security
-  const CAPTAIN_PIN = '2222';
+  const CAPTAIN_PIN = '2004';
 
   // Booking cutoff: every chukka day closes 24 hours before its throw-in.
   // Captain mode always bypasses it.
