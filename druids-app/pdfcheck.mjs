@@ -1,0 +1,21 @@
+import { createServer } from 'node:http';
+import { readFile, stat, writeFile } from 'node:fs/promises';
+import { extname, join, normalize } from 'node:path';
+import { chromium } from 'playwright-core';
+const ROOT='/home/user/druids/druids-app/pdfprobe-dist';
+const MIME={'.html':'text/html','.js':'text/javascript'};
+const server=createServer(async(req,res)=>{let f=join(ROOT,normalize(decodeURIComponent(req.url.split('?')[0])));
+  try{if((await stat(f)).isDirectory())f=join(f,'index.html');}catch{f=join(ROOT,'index.html');}
+  try{const b=await readFile(f);res.writeHead(200,{'Content-Type':MIME[extname(f)]||'application/octet-stream'});res.end(b);}catch{res.writeHead(404);res.end();}});
+await new Promise(r=>server.listen(4178,r));
+const browser=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'});
+const ctx=await browser.newContext({acceptDownloads:true});const page=await ctx.newPage();
+const errs=[];page.on('pageerror',e=>errs.push(e.message));
+await page.goto('http://localhost:4178/',{waitUntil:'domcontentloaded'});
+await page.waitForFunction('window.__ready === true',null,{timeout:20000});
+const dl=page.waitForEvent('download',{timeout:30000}).catch(()=>null);
+await page.evaluate('window.__run()').catch(e=>errs.push(e.message));
+const d=await dl;
+if(d) await writeFile('/tmp/claude-0/-home-user-druids/65cd843c-90c6-5919-9317-a1cc58c2b848/scratchpad/programme2.pdf',await readFile(await d.path()));
+console.log(d?'PDF captured':'no download','| errors:',errs.length?errs.join(' | '):'(none)');
+await browser.close();server.close();
