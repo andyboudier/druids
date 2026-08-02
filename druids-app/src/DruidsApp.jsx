@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { generateTournamentPdf, DEFAULT_COMMITTEE, teamHandicap } from './tournamentPdf';
 import { startLiveScore, updateLiveScore, endLiveScore } from './liveScoreActivity';
 import FixtureBoard from './FixtureBoard';
+import ChukkaBoard from './ChukkaBoard';
 
 // The desktop fixture board takes over above this width. Below it the app is
 // exactly as it always was — the phone layout is not touched by any of this.
@@ -840,6 +841,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const [editingDetailsId, setEditingDetailsId] = useState(null);
   const isDesktop = useIsDesktop();
   const [boardFixtureId, setBoardFixtureId] = useState(null); // fixture open on the desktop board
+  const [chukkaBoardOpen, setChukkaBoardOpen] = useState(false); // desktop chukka board
   const [showBackups, setShowBackups] = useState(false);
   const [backups, setBackups] = useState([]);
   const backupTimerRef = useRef(null);
@@ -1338,6 +1340,42 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     } catch (e) {
       setError('Schedule saved locally only — check your connection.');
     }
+  };
+
+  // ── Day settings ─────────────────────────────────────────────────────────
+  // Extracted so the phone's inline editors and the desktop chukka board drive
+  // exactly the same code, rather than two copies that can drift.
+
+  // Move a day's throw-in. Any existing draw keeps its teams and counts; only
+  // the printed times shift, recomputed off the new start.
+  const applyThrowIn = async (hhmm, dayKey = activeDay) => {
+    const parsed = parseTime(hhmm);
+    if (parsed === null) return false;
+    setThrowInMins(prev => ({ ...prev, [dayKey]: parsed }));
+    try { await window.storage.set(storageKey('throwin', dayKey), hhmm, true); } catch (e) {}
+    const existing = schedules[dayKey];
+    if (existing && existing.chukkas) {
+      saveSchedule({
+        ...existing,
+        chukkas: existing.chukkas.map(ck => ({ ...ck, time: chukkaTime(ck.idx, parsed) })),
+      }, dayKey);
+    }
+    return true;
+  };
+
+  const applyGround = async (val, dayKey = activeDay) => {
+    setGrounds(prev => ({ ...prev, [dayKey]: val }));
+    try { await window.storage.set(storageKey('ground', dayKey), val, true); } catch (err) {}
+  };
+
+  // Captain's manual "we're full" switch, on top of the automatic 24-hour cutoff.
+  const toggleManualClosed = async (dayKey = activeDay) => {
+    const val = !manualClosed[dayKey];
+    setManualClosed(prev => ({ ...prev, [dayKey]: val }));
+    try {
+      if (val) await window.storage.set(storageKey('booking-closed', dayKey), '1', true);
+      else await window.storage.delete(storageKey('booking-closed', dayKey), true);
+    } catch (err) {}
   };
 
   // Publish / unpublish the active day's draw to members.
@@ -2055,6 +2093,26 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         return { ...ck, teamB: [...ck.teamB, player] };
       }
       return ck;
+    });
+    setActivePlayer(null);
+  };
+
+  // Put a rider on a given side of a given chukka, or take them out (side =
+  // null). One primitive covering every cell of the desktop player grid, where
+  // a click cycles Blue → White → out; the phone's swap/remove/add buttons stay
+  // as they are. Like every other draw edit it routes through updateSchedule,
+  // so sums refresh and a published draw un-publishes.
+  const setChukkaCell = (chukkaIdx, playerId, side) => {
+    if (!schedule) return;
+    const player = players.find(p => p.id === playerId);
+    if (!player) return;
+    updateSchedule((ck, idx) => {
+      if (idx !== chukkaIdx) return ck;
+      const teamA = ck.teamA.filter(p => p.id !== playerId);
+      const teamB = ck.teamB.filter(p => p.id !== playerId);
+      if (side === 'A') return { ...ck, teamA: [...teamA, player], teamB };
+      if (side === 'B') return { ...ck, teamA, teamB: [...teamB, player] };
+      return { ...ck, teamA, teamB };
     });
     setActivePlayer(null);
   };
@@ -4453,6 +4511,58 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             />
           );
         })()}
+        {/* Desktop chukka board. Same rules as the fixture board: desktop-only,
+            captain-only, and every edit runs through the phone's own updaters. */}
+        {isDesktop && captainMode && chukkaBoardOpen && (
+          <ChukkaBoard
+            dayKeys={DAY_KEYS}
+            dayConfig={DAY_CONFIG}
+            dayKey={activeDay}
+            setDayKey={setActiveDay}
+            rosterCounts={Object.fromEntries(DAY_KEYS.map(k => [k, (rosters[k] || []).length]))}
+            players={players}
+            schedule={schedule}
+            throwInMin={throwInMin}
+            ground={ground}
+            groundOptions={GROUND_OPTIONS}
+            chukkaTime={chukkaTime}
+            totalChukkas={totalChukkas}
+            published={!!drawPublished[activeDay]}
+            setPublished={(v) => setPublished(v)}
+            bookingClosed={isBookingClosed()}
+            manualClosed={!!manualClosed[activeDay]}
+            toggleManualClosed={() => toggleManualClosed()}
+            onThrowIn={(v) => applyThrowIn(v)}
+            onGround={(v) => applyGround(v)}
+            adjustChukkas={adjustChukkas}
+            removePlayer={removePlayer}
+            toggleVip={toggleVip}
+            toggleNoConsecutive={toggleNoConsecutive}
+            togglePonyHire={togglePonyHire}
+            movePlayer={movePlayer}
+            sortByChukkas={sortByChukkas}
+            updateAvail={updateAvail}
+            setCell={setChukkaCell}
+            onGenerate={generate}
+            onClearDraw={clearDraw}
+            onWhatsApp={publishToWhatsApp}
+            onXLSX={exportXLSX}
+            onPNG={exportPNG}
+            rosterBackups={rosterBackups}
+            loadBackups={loadRosterBackups}
+            restoreBackup={restoreRosterBackup}
+            handicapOptions={HANDICAP_OPTIONS}
+            signUp={{
+              name, setName, mobile, setMobile, handicap, setHandicap,
+              chukkas, setChukkas, vip, setVip,
+              noConsecutive, setNoConsecutive, ponyHire, setPonyHire,
+              suggestions, fillFromMember, submit: handleAdd,
+              maxChukkas: maxChukkasFor(), fixedChukkas: fixedChukkasFor(),
+            }}
+            error={error}
+            onClose={() => setChukkaBoardOpen(false)}
+          />
+        )}
         {/* Masthead */}
         <header
           className="header-bg"
@@ -4587,27 +4697,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     <button
                       type="button"
                       onClick={async () => {
-                        const parsed = parseTime(throwInInput);
-                        if (parsed === null) return;
-                        setThrowInMins(prev => ({ ...prev, [activeDay]: parsed }));
-                        try { await window.storage.set(storageKey('throwin', activeDay), throwInInput, true); } catch (e) {}
-
-                        // If a schedule already exists for this day, recompute
-                        // each chukka's time using the new throw-in — teams
-                        // and counts stay exactly as drawn.
-                        const existing = schedules[activeDay];
-                        if (existing && existing.chukkas) {
-                          const updated = {
-                            ...existing,
-                            chukkas: existing.chukkas.map(ck => ({
-                              ...ck,
-                              time: chukkaTime(ck.idx, parsed),
-                            })),
-                          };
-                          saveSchedule(updated, activeDay);
-                        }
-
-                        setThrowInEditing(false);
+                        if (await applyThrowIn(throwInInput)) setThrowInEditing(false);
                       }}
                       style={{ background: 'var(--burgundy)', color: 'var(--cream)', border: 'none', borderRadius: '4px', padding: '8px 14px', fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', cursor: 'pointer' }}
                     >Save</button>
@@ -4623,11 +4713,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     <span style={{ fontSize: '10px', letterSpacing: '1px', textTransform: 'uppercase', color: 'var(--muted)' }}>Ground</span>
                     <select
                       value={ground}
-                      onChange={async (e) => {
-                        const val = e.target.value;
-                        setGrounds(prev => ({ ...prev, [activeDay]: val }));
-                        try { await window.storage.set(storageKey('ground', activeDay), val, true); } catch (err) {}
-                      }}
+                      onChange={(e) => applyGround(e.target.value)}
                       style={{ padding: '6px 10px', border: '1px solid var(--line)', borderRadius: '4px', fontSize: '13px', fontFamily: 'inherit', background: '#fff', color: 'var(--ink)' }}
                     >
                       <option value="">— not set —</option>
@@ -4638,14 +4724,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                 {captainMode && (
                   <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                     <button
-                      onClick={async () => {
-                        const val = !manualClosed[activeDay];
-                        setManualClosed(prev => ({ ...prev, [activeDay]: val }));
-                        try {
-                          if (val) await window.storage.set(storageKey('booking-closed', activeDay), '1', true);
-                          else await window.storage.delete(storageKey('booking-closed', activeDay), true);
-                        } catch (err) {}
-                      }}
+                      onClick={() => toggleManualClosed()}
                       style={{
                         padding: '7px 14px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', letterSpacing: '0.3px',
                         border: manualClosed[activeDay] ? 'none' : '1px solid var(--burgundy)',
@@ -4658,6 +4737,17 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     <span style={{ fontSize: '11px', color: manualClosed[activeDay] ? 'var(--burgundy)' : 'var(--muted)' }}>
                       {players.length} signed up{manualClosed[activeDay] ? ' · sign-ups closed' : ''}
                     </span>
+                  </div>
+                )}
+                {isDesktop && captainMode && (
+                  <div style={{ marginTop: '12px' }}>
+                    <button
+                      onClick={() => setChukkaBoardOpen(true)}
+                      style={{ background: 'var(--gold-bright)', border: '1px solid var(--gold-bright)', color: 'var(--ink)', padding: '8px 16px', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                    >⛶ Open the desktop chukka board</button>
+                    <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '5px' }}>
+                      Roster, draw and settings side by side — with the players × chukkas grid.
+                    </div>
                   </div>
                 )}
                 <h2 className="display" style={{ margin: '2px 0 0', fontSize: '24px' }}>Club Chukka Booking</h2>
