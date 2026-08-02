@@ -20,3 +20,11 @@ build/
 *.jks
 *.keystore
 android/app/google-services.json
+
+# Throwaway harnesses used to drive the PDF generator / app in a headless
+# browser during development. Never part of the app.
+pdfprobe/
+pdfprobe-dist/
+pdfcheck.mjs
+smoke*.mjs
+fbcheck.mjs

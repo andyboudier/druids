@@ -132,7 +132,11 @@ export const teamHandicap = (team) => {
   }
   const hs = counted.map(hcp).filter(n => n != null);
   if (hs.length) return hs.reduce((s, n) => s + n, 0);
-  const stored = Number(team && team.handicap);
+  // Number(null) is 0, so an unset stored handicap has to be screened out
+  // before the conversion — otherwise a team with no handicaps prints as "0".
+  const rawStored = team && team.handicap;
+  if (rawStored == null || rawStored === '') return null;
+  const stored = Number(rawStored);
   return Number.isFinite(stored) ? stored : null;
 };
 
@@ -194,12 +198,41 @@ const ordinal = (n) => {
 };
 
 // 'Sat 30 & Sun 31 May' + month 'May' → '30th & 31st May 2026'
+// Pair each day number in a fixture's date string with the month it belongs to,
+// scanning left to right: numbers accumulate until a month name is reached, and
+// that month claims them. Handles "Sat 2 & Sun 3 May" (one month) as well as
+// "Thu 30 July - Sun 2 August" (two), which a plain number-scan gets wrong by
+// stamping every date with the fixture's own month.
+const datePartsOf = (fixture) => {
+  const tokens = String(fixture.date || '').match(/\d{1,2}|[A-Za-z]+/g) || [];
+  const out = [];
+  let pending = [];
+  tokens.forEach((t) => {
+    if (/^\d+$/.test(t)) { pending.push(Number(t)); return; }
+    const mi = ALL_MONTHS_PDF.findIndex(m => m.toLowerCase() === t.toLowerCase());
+    if (mi >= 0) {
+      pending.forEach(n => out.push({ day: n, month: ALL_MONTHS_PDF[mi] }));
+      pending = [];
+    }
+  });
+  // Trailing numbers with no month after them fall back to the fixture's month.
+  pending.forEach(n => out.push({ day: n, month: fixture.month }));
+  return out.filter(p => p.day >= 1 && p.day <= 31);
+};
+
+const ALL_MONTHS_PDF = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
 const buildDateSubtitle = (fixture) => {
-  const nums = (fixture.date.match(/\b\d{1,2}\b/g) || []).map(Number);
-  if (!nums.length) return `${fixture.month} 2026`;
-  const ordinals = nums.map(ordinal);
-  if (ordinals.length === 1) return `${ordinals[0]} ${fixture.month} 2026`;
-  return `${ordinals[0]} & ${ordinals[ordinals.length - 1]} ${fixture.month} 2026`;
+  const parts = datePartsOf(fixture);
+  if (!parts.length) return `${fixture.month} 2026`;
+  const first = parts[0], last = parts[parts.length - 1];
+  if (parts.length === 1) return `${ordinal(first.day)} ${first.month} 2026`;
+  // Same month: "2nd & 3rd May 2026". Different: "30th July & 2nd August 2026".
+  if (first.month === last.month) {
+    return `${ordinal(first.day)} & ${ordinal(last.day)} ${first.month} 2026`;
+  }
+  return `${ordinal(first.day)} ${first.month} & ${ordinal(last.day)} ${last.month} 2026`;
 };
 
 const ensureLeadingThe = (s) => /^the\b/i.test(s) ? s : 'The ' + s;
@@ -209,7 +242,12 @@ const ensureLeadingThe = (s) => /^the\b/i.test(s) ? s : 'The ' + s;
 const daySingleDate = (day, fixture) => {
   const label = ((day && day.dateLabel) || '').trim();
   const year = (buildDateSubtitle(fixture).match(/\b(20\d\d)\b/) || [])[1] || '2026';
-  const num = label.match(/\b(\d{1,2})\b/);
+  // Allow an ordinal suffix: \b(\d{1,2})\b never matches "31" in "31st",
+  // because there is no word boundary before the "st". Without this the
+  // parse silently fails and the fallback below appends the year to the end
+  // of the whole label — so "Friday 31st July - Beach Polo" came out as
+  // "31st July - Beach Polo 2026".
+  const num = label.match(/\b(\d{1,2})(?:st|nd|rd|th)?\b/i);
   const mon = label.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/i);
   if (num && mon) {
     const m = mon[1].charAt(0).toUpperCase() + mon[1].slice(1).toLowerCase();
@@ -249,6 +287,9 @@ function underlineCentered(doc, text, cx, baselineY, gap = 0.8) {
 
 // ── Page builders ────────────────────────────────────────────────────────
 
+// Retained but no longer called: the programme now opens directly on the
+// matches. Kept so a cover can be reinstated (e.g. behind an option) without
+// rebuilding the layout, along with the fixture.titleLines feature it drives.
 function drawCoverPage(doc, fixture, subtitle) {
   // Crest large, near upper third
   drawCrest(doc, PAGE_W / 2, 95, 90);
@@ -345,6 +386,7 @@ function measureMatch(match, hideChukkas) {
   if (hasResult(match)) h += 6;    // result score
   let officials = 0;
   if (match.umpires) officials++;
+  if (match.commentator) officials++;
   if (match.goalJudges) officials++;
   if (match.timekeeper) officials++;
   h += officials ? officials * 5 + 2 : 2;
@@ -364,6 +406,7 @@ function uniqueOfficials(matches) {
   matches.forEach((m) => {
     const lines = [];
     if (m.umpires) lines.push(`UMPIRES: ${m.umpires.toUpperCase()}`);
+    if (m.commentator) lines.push(`COMMENTATOR: ${m.commentator.toUpperCase()}`);
     if (m.goalJudges) lines.push(`GOAL JUDGES: ${m.goalJudges.toUpperCase()}`);
     if (m.timekeeper) lines.push(`TIMEKEEPER: ${m.timekeeper.toUpperCase()}`);
     lines.forEach((l) => { if (!seen.has(l)) { seen.add(l); out.push(l); } });
@@ -1024,9 +1067,10 @@ function drawMatch(doc, match, startY, hideChukkas) {
     y += 6;
   }
 
-  // Officials — umpires, goal judges, timekeeper
+  // Officials — umpires, commentator, goal judges, timekeeper
   const officials = [];
   if (match.umpires) officials.push(`UMPIRES: ${match.umpires.toUpperCase()}`);
+  if (match.commentator) officials.push(`COMMENTATOR: ${match.commentator.toUpperCase()}`);
   if (match.goalJudges) officials.push(`GOAL JUDGES: ${match.goalJudges.toUpperCase()}`);
   if (match.timekeeper) officials.push(`TIMEKEEPER: ${match.timekeeper.toUpperCase()}`);
   if (officials.length) {
@@ -1231,8 +1275,11 @@ export async function generateTournamentPdf(fixture, detail, chukkaByDow = {}, o
   const subtitle = opts.subtitle || buildDateSubtitle(fixture);
   const hideChukkas = !!opts.hideChukkas;
 
-  // Cover
-  drawCoverPage(doc, fixture, subtitle);
+  // No cover page: the programme opens straight onto the first day's matches.
+  // jsPDF starts with one blank page, so the first section draws onto it rather
+  // than calling addPage() — `firstPage` tracks that across the branches below.
+  let firstPage = true;
+  const nextPage = () => { if (firstPage) { firstPage = false; } else { doc.addPage(); } };
 
   // Team sheets by division — a standalone handout for divisional tournaments.
   // Teams only, no running order, since divisions cut across the time-ordered draw.
@@ -1242,10 +1289,10 @@ export async function generateTournamentPdf(fixture, detail, chukkaByDow = {}, o
       throw new Error('No divisions set yet. Put a division (e.g. I, II, III) on each match in captain mode first.');
     }
     divDays.forEach((day) => {
-      doc.addPage();
+      nextPage();
       drawDivisionsPage(doc, fixture, day);
     });
-    doc.addPage();
+    nextPage();
     drawRulesPage(doc, opts.committee);
     const tp = sanitizeFilename(ensureLeadingThe(fixture.name));
     const dp = sanitizeFilename((opts.filenameDate || subtitle).replace(/ 2026$/, ''));
@@ -1255,18 +1302,18 @@ export async function generateTournamentPdf(fixture, detail, chukkaByDow = {}, o
 
   // Optional results summary (all games, winners highlighted, no chukkas) — page 2.
   if (opts.resultsSummary) {
-    doc.addPage();
+    nextPage();
     drawResultsSummaryPage(doc, fixture, days);
   }
 
   // One page per day
   days.forEach((day) => {
-    doc.addPage();
+    nextPage();
     drawDayPage(doc, fixture, subtitle, day, chukkaByDow, hideChukkas);
   });
 
   // Rules page
-  doc.addPage();
+  nextPage();
   drawRulesPage(doc, opts.committee);
 
   // Filename: "The_9th_Lancer_Trophy_30th_&_31st_May.pdf"
