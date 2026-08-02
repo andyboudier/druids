@@ -86,9 +86,15 @@ live-score widget. The website and installable PWA work without any of this.
 1. **[developer.apple.com](https://developer.apple.com)** → *Certificates,
    Identifiers & Profiles* → **Identifiers** → register **three** App IDs
    (exact casing matters):
-   - `uk.co.druidspolo.poloact` — tick **Push Notifications**
-   - `uk.co.druidspolo.poloact.watchkitapp` — no capabilities
-   - `uk.co.druidspolo.poloact.DLPCScoreWidget` — no capabilities
+   - `uk.co.druidspolo.poloact`
+   - `uk.co.druidspolo.poloact.watchkitapp`
+   - `uk.co.druidspolo.poloact.DLPCScoreWidget`
+
+   None of them need capabilities. `@capacitor/push-notifications` is a
+   dependency but is never called: the chukka reminders use
+   `LocalNotifications`, which needs no capability or entitlement. Do **not**
+   add Push Notifications in Xcode unless the app actually starts using it —
+   it would add an unused `aps-environment` entitlement to sign and justify.
 2. **[appstoreconnect.apple.com](https://appstoreconnect.apple.com)** →
    **Apps → ＋ → New App**. Name it *Druids PoloACT*, primary language
    English (U.K.), bundle ID `uk.co.druidspolo.poloact`, pick an SKU, Full
