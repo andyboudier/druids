@@ -152,7 +152,7 @@ const DAY_CONFIG = {
 };
 const DAY_KEYS = ['thu', 'sat', 'sun'];
 // Arena is played 3v3 — `generate` passes a 6-slot cap when it is the ground.
-const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Arena', 'The Beach'];
+const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Arena'];
 
 // ── Club shop (preview) ──────────────────────────────────────────────────
 // Captain-only for now. Checkout is stubbed until Stripe is wired up: each

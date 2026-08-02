@@ -242,7 +242,12 @@ const ensureLeadingThe = (s) => /^the\b/i.test(s) ? s : 'The ' + s;
 const daySingleDate = (day, fixture) => {
   const label = ((day && day.dateLabel) || '').trim();
   const year = (buildDateSubtitle(fixture).match(/\b(20\d\d)\b/) || [])[1] || '2026';
-  const num = label.match(/\b(\d{1,2})\b/);
+  // Allow an ordinal suffix: \b(\d{1,2})\b never matches "31" in "31st",
+  // because there is no word boundary before the "st". Without this the
+  // parse silently fails and the fallback below appends the year to the end
+  // of the whole label — so "Friday 31st July - Beach Polo" came out as
+  // "31st July - Beach Polo 2026".
+  const num = label.match(/\b(\d{1,2})(?:st|nd|rd|th)?\b/i);
   const mon = label.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/i);
   if (num && mon) {
     const m = mon[1].charAt(0).toUpperCase() + mon[1].slice(1).toLowerCase();
