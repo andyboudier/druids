@@ -152,6 +152,15 @@ const membershipById = (id) => MEMBERSHIP_TYPES_2026.find(m => m.id === id) || M
 const cleanSquad = (players) => (players || [])
   .filter(p => p && (p.name || '').trim())
   .map(p => ({ name: p.name, handicap: p.handicap ?? null }));
+// Same, but keeps a blank slot that has a named player below it. Used while a
+// squad is being edited: dropping an interior blank would shift every shirt
+// number under it up by one as soon as a name was cleared.
+const trimSquad = (players) => {
+  const rows = (players || []).map(p => ({ name: (p && p.name) || '', handicap: (p && p.handicap) ?? null }));
+  let last = -1;
+  rows.forEach((p, i) => { if (p.name.trim()) last = i; });
+  return rows.slice(0, last + 1);
+};
 // Players listed per team in a tournament match. Four on the field, but a fifth
 // can be named (substitute / shared mount). The PDF sizes itself off the actual
 // player count, so nothing else needs to change.
@@ -2569,6 +2578,44 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     try { await window.storage.set('teams-db', JSON.stringify(next), true); } catch (e) {}
   };
 
+  // Write one team into the club's teams directory. Pass `oldName` when the team
+  // has been renamed — the directory is keyed by lower-cased name, so a rename is
+  // a new key plus a removal of the old one, not an edit in place.
+  const saveTeamEntry = async (team, oldName) => {
+    const name = (team.name || '').trim().replace(/\s+/g, ' ');
+    if (!name) return;
+    const next = { ...teamsDb };
+    if (oldName) {
+      const from = oldName.trim().toLowerCase();
+      if (from && from !== name.toLowerCase()) delete next[from];
+    }
+    next[name.toLowerCase()] = {
+      ...(teamsDb[name.toLowerCase()] || {}),
+      ...team,
+      name,
+      handicap: team.handicap ?? null,
+      // Trailing blanks only — a gap mid-squad has to survive, or clearing one
+      // name mid-edit would shift every shirt number below it up by one.
+      players: trimSquad(team.players),
+    };
+    await saveTeamsDb(next);
+  };
+
+  const deleteTeamEntry = (name) => {
+    const key = (name || '').trim().toLowerCase();
+    if (!key || !teamsDb[key]) return;
+    setConfirmModal({
+      title: `Delete ${teamsDb[key].name}?`,
+      message: 'This removes the team from the club directory. Fixtures it already plays in keep their squads — only the saved team is removed.',
+      confirmLabel: 'Delete team',
+      onConfirm: () => {
+        const next = { ...teamsDb };
+        delete next[key];
+        saveTeamsDb(next);
+      },
+    });
+  };
+
   // Shirt colour belongs to the team, not to one match. Captains set it once on
   // the live scoreboard and every later match involving that squad inherits it.
   const rememberTeamColour = (teamName, colourKey) => {
@@ -4500,6 +4547,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               groundOptions={GROUND_OPTIONS}
               teamColours={TEAM_COLOURS}
               teamColourKey={teamColourKey}
+              saveTeam={saveTeamEntry}
+              deleteTeam={deleteTeamEntry}
               interestCount={(interest[fx.id] || []).length}
               interestClosesAt={interestClosesAt(fx)}
               interestClosed={isInterestClosed(fx)}

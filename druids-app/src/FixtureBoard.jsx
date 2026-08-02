@@ -56,6 +56,7 @@ const fmtGoals = (g) => (g === 0.5 ? '½' : (g % 1 ? `${Math.floor(g)}½` : Stri
 export default function FixtureBoard({
   fixture, draft, setDraft, updDay, updMatch, updTeam, moveMatch,
   teamsDb, playerDb, groundOptions, teamColours, teamColourKey,
+  saveTeam, deleteTeam,
   interestCount, interestClosesAt, interestClosed,
   onClose, onPrint,
 }) {
@@ -65,6 +66,9 @@ export default function FixtureBoard({
   const [tab, setTab] = useState('teams');
   const [search, setSearch] = useState('');
   const [dropTarget, setDropTarget] = useState(null); // `${di}:${mi}:${tk}`
+  const [adding, setAdding] = useState(false);        // the "new team" form is open
+  const [newName, setNewName] = useState('');
+  const [openKey, setOpenKey] = useState(null);       // which team card is expanded
   const dragged = useRef(null);
 
   const day = days[Math.min(dayIx, Math.max(0, days.length - 1))] || null;
@@ -132,6 +136,36 @@ export default function FixtureBoard({
     setDraft(next);
   };
 
+  // ── Creating a team ──────────────────────────────────────────────────────
+  // A team only belongs to a fixture by playing in one of its matches, so a
+  // brand-new team is written to the club's teams directory and listed under
+  // "Not in this fixture" until it is dragged into a match. That also means it
+  // is available to every future fixture, which is how squads actually recur.
+  const nameTaken = useMemo(() => {
+    const key = norm(newName);
+    if (!key) return false;
+    return teams.some(t => norm(t.name) === key) || Object.keys(teamsDb || {}).some(k => norm(k) === key);
+  }, [newName, teams, teamsDb]);
+
+  const createTeam = () => {
+    const name = (newName || '').trim().replace(/\s+/g, ' ');
+    if (!name || nameTaken || !saveTeam) return;
+    saveTeam({ name, handicap: null, players: [] });
+    setNewName('');
+    setAdding(false);
+    setOpenKey(norm(name)); // open it straight away so the squad can be typed in
+  };
+
+  // Renaming a directory team is a key change, so it is a delete plus a write
+  // rather than an in-place edit — hence its own handler.
+  const renameStoredTeam = (from, to) => {
+    const clean = (to || '').trim();
+    if (!clean || !saveTeam) return;
+    const prev = (teamsDb || {})[norm(from)] || {};
+    saveTeam({ ...prev, name: clean }, from);
+    if (openKey === norm(from)) setOpenKey(norm(clean));
+  };
+
   const assignTeam = (di, mi, tk, team) => {
     updTeam(di, mi, tk, () => ({
       name: team.name,
@@ -193,13 +227,31 @@ export default function FixtureBoard({
 
           {tab === 'teams' ? (
             <div style={S.railBody}>
-              {teams.length === 0 && (
-                <p style={S.hint}>No teams yet. Add a match, then type a team name into one of its
-                  slots — it will appear here and can be dragged into any other match.</p>
+              {adding ? (
+                <form style={S.newTeam} onSubmit={(e) => { e.preventDefault(); createTeam(); }}>
+                  <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+                    placeholder="Team name" style={S.inpFull}
+                    onKeyDown={e => { if (e.key === 'Escape') { setAdding(false); setNewName(''); } }} />
+                  {nameTaken && <div style={S.hint}>A team called “{newName.trim()}” already exists.</div>}
+                  <div style={S.newTeamRow}>
+                    <button type="submit" disabled={!newName.trim() || nameTaken} style={S.btnGoldSm}>Create team</button>
+                    <button type="button" onClick={() => { setAdding(false); setNewName(''); }} style={S.btnPlainSm}>Cancel</button>
+                  </div>
+                </form>
+              ) : (
+                <button onClick={() => setAdding(true)} style={S.addTeamBtn}>＋ New team</button>
+              )}
+
+              {teams.length === 0 && !adding && (
+                <p style={S.hint}>No teams in this fixture yet. Create one above, or type a name
+                  straight into a match slot — either way it lands here and can be dragged into
+                  every other match it plays.</p>
               )}
               {teams.map(t => (
                 <TeamCard
                   key={norm(t.name)} team={t} colour={colourOf(t.name)}
+                  open={openKey === norm(t.name)}
+                  onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
                   onDragStart={() => { dragged.current = t; }}
                   onRename={(v) => renameTeamEverywhere(t.name, v)}
                   onPlayers={(ps) => writeSquadEverywhere(t.name, ps, t.handicap)}
@@ -209,14 +261,18 @@ export default function FixtureBoard({
 
               {availableTeams.length > 0 && (
                 <>
-                  <div style={S.railHead}>From the club directory</div>
+                  <div style={S.railHead}>Not in this fixture</div>
                   {availableTeams.map(t => (
-                    <div key={norm(t.name)} draggable onDragStart={() => { dragged.current = t; }}
-                      style={S.dirTeam} title="Drag into a match">
-                      <ColourDot colour={colourOf(t.name)} />
-                      <span style={S.dirName}>{t.name}</span>
-                      <span style={S.hcap}>{fmtH(squadHandicap(t)) || '—'}</span>
-                    </div>
+                    <TeamCard
+                      key={norm(t.name)} team={{ ...t, slots: [] }} colour={colourOf(t.name)}
+                      open={openKey === norm(t.name)}
+                      onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
+                      onDragStart={() => { dragged.current = t; }}
+                      onRename={(v) => renameStoredTeam(t.name, v)}
+                      onPlayers={(ps) => saveTeam({ ...t, players: ps })}
+                      onDelete={deleteTeam ? () => deleteTeam(t.name) : null}
+                      playerDb={playerDb}
+                    />
                   ))}
                 </>
               )}
@@ -245,7 +301,7 @@ export default function FixtureBoard({
               <button key={d.id || i} role="tab" aria-selected={i === dayIx} onClick={() => setDayIx(i)}
                 style={{ ...S.dayTab, ...(i === dayIx ? S.dayTabOn : null) }}>
                 <span>{(d.dateLabel || `Day ${i + 1}`).split(' ').slice(0, 2).join(' ')}</span>
-                <small style={S.dayTabSub}>{(d.matches || []).length} matches</small>
+                <small style={S.dayTabSub}>{(d.matches || []).length} {(d.matches || []).length === 1 ? 'match' : 'matches'}</small>
               </button>
             ))}
             <button onClick={addDay} style={S.dayTab}>＋ Add day</button>
@@ -427,9 +483,9 @@ export default function FixtureBoard({
 }
 
 // ── Team card in the rail ──────────────────────────────────────────────────
-function TeamCard({ team, colour, onDragStart, onRename, onPlayers, playerDb }) {
-  const [open, setOpen] = useState(false);
+function TeamCard({ team, colour, open, onToggle, onDragStart, onRename, onPlayers, onDelete, playerDb }) {
   const S = styles;
+  const inFixture = (team.slots || []).length > 0;
   const setPlayer = (i, patch) => {
     const ps = clone(team.players || []);
     while (ps.length <= i) ps.push({ name: '', handicap: null });
@@ -448,11 +504,13 @@ function TeamCard({ team, colour, onDragStart, onRename, onPlayers, playerDb }) 
 
   return (
     <div draggable onDragStart={onDragStart} style={S.team} title="Drag into a match">
-      <div style={S.teamHead} onClick={() => setOpen(!open)}>
+      <div style={S.teamHead} onClick={onToggle}>
         <ColourDot colour={colour} />
         <span style={S.teamName}>{team.name}</span>
         <span style={S.hcap}>{fmtH(squadHandicap(team)) || '—'}</span>
-        <span style={S.apps}>{team.slots.length}×</span>
+        <span style={S.apps} title={inFixture ? `Plays ${team.slots.length} matches in this fixture` : 'Not in this fixture yet'}>
+          {inFixture ? `${team.slots.length}×` : 'unused'}
+        </span>
         <span style={S.caret}>{open ? '▾' : '▸'}</span>
       </div>
       {open ? (
@@ -474,7 +532,17 @@ function TeamCard({ team, colour, onDragStart, onRename, onPlayers, playerDb }) 
               </div>
             );
           })}
-          <div style={S.hint}>Edits here apply to all {team.slots.length} matches this team plays.</div>
+          <div style={S.teamFoot}>
+            <span style={S.hint}>
+              {inFixture
+                ? `Edits apply to ${team.slots.length === 1 ? 'the one match' : `all ${team.slots.length} matches`} this team plays.`
+                : 'Drag it onto a match slot to put it in this fixture.'}
+            </span>
+            {onDelete && (
+              <button onClick={onDelete} style={S.linkDanger}
+                title="Remove this team from the club directory">Delete</button>
+            )}
+          </div>
         </div>
       ) : (
         <ul style={S.teamList}>
@@ -605,6 +673,13 @@ const styles = {
   teamList: { listStyle: 'none', margin: 0, padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 2 },
   teamLi: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5 },
   pEdit: { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 },
+  teamFoot: { display: 'flex', alignItems: 'flex-end', gap: 8, marginTop: 2 },
+  addTeamBtn: { width: '100%', padding: '9px 10px', border: '1px dashed var(--line)', borderRadius: 8, background: 'transparent', font: 'inherit', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer', marginBottom: 10 },
+  newTeam: { border: '1px solid var(--gold-bright)', borderRadius: 8, padding: 10, marginBottom: 10, background: 'var(--cream-warm)', display: 'flex', flexDirection: 'column', gap: 7 },
+  newTeamRow: { display: 'flex', gap: 6 },
+  btnGoldSm: { font: 'inherit', fontSize: 11.5, fontWeight: 600, padding: '6px 11px', borderRadius: 6, border: '1px solid var(--gold-bright)', background: 'var(--gold-bright)', color: 'var(--ink)', cursor: 'pointer' },
+  btnPlainSm: { font: 'inherit', fontSize: 11.5, padding: '6px 11px', borderRadius: 6, border: '1px solid var(--line)', background: '#fff', color: 'var(--muted)', cursor: 'pointer' },
+  linkDanger: { background: 'none', border: 0, padding: 0, font: 'inherit', fontSize: 11, color: 'var(--danger)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3, marginLeft: 'auto', flexShrink: 0 },
   dirTeam: { display: 'flex', alignItems: 'center', gap: 7, padding: '7px 10px', border: '1px dashed var(--line)', borderRadius: 7, marginBottom: 6, cursor: 'grab' },
   dirName: { flex: 1, minWidth: 0, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 
