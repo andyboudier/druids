@@ -17,7 +17,7 @@ const config: CapacitorConfig = {
     // changes appear instantly without re-archiving. Native/Watch changes still
     // need an archive. To revert to local-bundle (friendlier for App Store
     // submission review), comment out the url + cleartext lines below.
-    url: 'https://druids-poloact.vercel.app',
+    url: 'https://druids-tpd4.vercel.app',
     cleartext: false,
     androidScheme: 'https',
     iosScheme: 'https',
