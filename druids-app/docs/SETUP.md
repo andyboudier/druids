@@ -93,7 +93,18 @@ live-score widget. The website and installable PWA work without any of this.
    **Apps → ＋ → New App**. Name it *Druids PoloACT*, primary language
    English (U.K.), bundle ID `uk.co.druidspolo.poloact`, pick an SKU, Full
    Access.
-3. On the Mac, clone this repo, then:
+3. ⚠️ **Share the `App` scheme.** Xcode Cloud can only build *shared* schemes,
+   and Xcode keeps schemes in `xcuserdata/` (gitignored) until you share them.
+   In Xcode: **Product → Scheme → Manage Schemes…**, tick **Shared** against
+   `App`, close, then commit the new file:
+   ```sh
+   git add ios/App/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme
+   git commit -m "Share the App scheme for Xcode Cloud"
+   git push
+   ```
+   Skip this and Xcode Cloud will not offer the scheme when you create the
+   workflow.
+4. On the Mac, clone this repo, then:
    ```sh
    cd druids-app
    npm install --legacy-peer-deps
@@ -101,23 +112,23 @@ live-score widget. The website and installable PWA work without any of this.
    npx cap sync ios
    open ios/App/App.xcodeproj
    ```
-4. In Xcode, set your **Team** with Automatic signing on all three targets:
+5. In Xcode, set your **Team** with Automatic signing on all three targets:
    *App*, *DLPC Watch Watch App*, *DLPCScoreWidget*.
-5. **Integrate → Create Workflow** (older Xcode: *Product → Xcode Cloud*). Grant
+6. **Integrate → Create Workflow** (older Xcode: *Product → Xcode Cloud*). Grant
    GitHub access and click **Authorize** — this covers the public
    `ionic-team/capacitor-swift-pm` Swift package dependency. Install the Xcode
    Cloud app on this repository.
-6. Edit the workflow: **Start Condition = branch `main`**, action **Archive –
+7. Edit the workflow: **Start Condition = branch `main`**, action **Archive –
    iOS**, and **add a TestFlight (Internal Testing) post-action**.
    ⚠️ An Archive-only workflow builds fine but never reaches TestFlight.
-7. The CI scripts are already in place:
+8. The CI scripts are already in place:
    - `ios/App/ci_scripts/ci_post_clone.sh` installs npm deps and builds the web
      bundle on the runner.
    - `ios/App/ci_scripts/ci_pre_xcodebuild.sh` stamps a unique build number from
      `$CI_BUILD_NUMBER`. This app starts at build 1; if you ever recreate the
      App Store record against the same bundle ID, raise `OFFSET` in that script
      above the highest build number already used.
-8. `Info.plist` already sets `ITSAppUsesNonExemptEncryption=false`, so the
+9. `Info.plist` already sets `ITSAppUsesNonExemptEncryption=false`, so the
    export-compliance question is skipped on every upload.
 
 > **Do not** add `@capacitor/filesystem` or `@capacitor/share` — they break the
