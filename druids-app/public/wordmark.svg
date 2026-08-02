@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 170" width="640" height="170" role="img" aria-label="Druids Lodge Polo">
+  <title>Druids Lodge Polo</title>
+  <!-- Club wordmark. Web fonts do not load inside an <img>-referenced SVG, so the
+       stack falls back to a Didone-ish system serif that matches the club's
+       printed materials closely. -->
+  <g fill="#FFFFFF" font-family="Fraunces, 'Playfair Display', Georgia, 'Times New Roman', serif" font-weight="400" text-anchor="middle">
+    <text x="320" y="72" font-size="64" letter-spacing="4">DRUIDS LODGE</text>
+    <text x="320" y="146" font-size="64" letter-spacing="10">POLO</text>
+  </g>
+</svg>

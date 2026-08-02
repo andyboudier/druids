@@ -1,0 +1,22 @@
+
+# added for iOS/Capacitor + web build artifacts
+node_modules/
+dist/
+.vite/
+.DS_Store
+ios/App/Pods/
+ios/App/App/public/
+ios/capacitor-cordova-ios-plugins/
+**/xcuserdata/
+**/DerivedData/
+build/
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+
+# Android signing keystores — never commit
+*.jks
+*.keystore
+android/app/google-services.json
