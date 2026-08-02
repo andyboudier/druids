@@ -152,7 +152,7 @@ const DAY_CONFIG = {
 };
 const DAY_KEYS = ['thu', 'sat', 'sun'];
 // Arena is played 3v3 — `generate` passes a 6-slot cap when it is the ground.
-const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Arena'];
+const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Arena', 'The Beach'];
 
 // ── Club shop (preview) ──────────────────────────────────────────────────
 // Captain-only for now. Checkout is stubbed until Stripe is wired up: each
@@ -5754,6 +5754,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                               {match.umpires && (
                                                 <div style={{ fontSize: '10px', color: 'var(--muted)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Umpires: {match.umpires}</div>
                                               )}
+                                              {match.commentator && (
+                                                <div style={{ fontSize: '10px', color: 'var(--muted)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Commentator: {match.commentator}</div>
+                                              )}
                                               {match.goalJudges && (
                                                 <div style={{ fontSize: '10px', color: 'var(--muted)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Goal judges: {match.goalJudges}</div>
                                               )}
@@ -5933,7 +5936,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                               label: '',
                                               teamA: mkTeam(enteredTeams[i], d),
                                               teamB: mkTeam(enteredTeams[i + 1], d),
-                                              chukkas: 4, umpires: '', goalJudges: '', timekeeper: '', notes: '',
+                                              chukkas: 4, umpires: '', commentator: '', goalJudges: '', timekeeper: '', notes: '',
                                             });
                                           }
                                           return { id: d.key, dateLabel: d.label, ground: '', matches, prizegiving: false };
@@ -6009,6 +6012,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                     <button onClick={() => { const matches = day.matches.filter((_,i) => i!==mi); updDay(di, d => ({...d, matches})); }} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: '16px', cursor: 'pointer', flexShrink: 0, lineHeight: 1, padding: '0 2px' }}>×</button>
                                                   </div>
                                                   <input className="input-field" placeholder="Umpires" value={match.umpires || ''} onChange={e => updMatch(di, mi, m => ({...m, umpires: e.target.value}))} style={{ width: '100%', padding: '5px 7px', fontSize: '12px', marginBottom: '5px' }} />
+                                                  <input className="input-field" placeholder="Commentator" value={match.commentator || ''} onChange={e => updMatch(di, mi, m => ({...m, commentator: e.target.value}))} style={{ width: '100%', padding: '5px 7px', fontSize: '12px', marginBottom: '5px' }} />
                                                   <div style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
                                                     <input className="input-field" placeholder="Goal judges" value={match.goalJudges || ''} onChange={e => updMatch(di, mi, m => ({...m, goalJudges: e.target.value}))} style={{ flex: 1, minWidth: 0, padding: '5px 7px', fontSize: '12px' }} />
                                                     <input className="input-field" placeholder="Timekeeper" value={match.timekeeper || ''} onChange={e => updMatch(di, mi, m => ({...m, timekeeper: e.target.value}))} style={{ flex: 1, minWidth: 0, padding: '5px 7px', fontSize: '12px' }} />
@@ -6106,14 +6110,14 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                     id: 'm' + Date.now() + Math.random(),
                                                     time: '',
                                                     label: '',
-                                                    chukkas: 4, umpires: '', goalJudges: '', timekeeper: '',
+                                                    chukkas: 4, umpires: '', commentator: '', goalJudges: '', timekeeper: '',
                                                     teamA: { name: m.teamA?.name || '', handicap: m.teamA?.handicap ?? null, players: cleanSquad(m.teamA?.players) },
                                                     teamB: { name: m.teamB?.name || '', handicap: m.teamB?.handicap ?? null, players: cleanSquad(m.teamB?.players) },
                                                   }));
                                                   updDay(di, d => ({...d, matches: copiedMatches}));
                                                 }} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--burgundy)', color: 'var(--burgundy)', padding: '5px', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', letterSpacing: '0.5px', marginBottom: '2px', opacity: 0.75 }}>↩ Copy teams from Day 1</button>
                                               )}
-                                              <button onClick={() => updDay(di, d => ({...d, matches: [...(d.matches||[]), {id:'m'+Date.now(), time:'', label:'', teamA:{name:'', handicap:null, players:[]}, teamB:{name:'', handicap:null, players:[]}, chukkas:4, umpires:'', goalJudges:'', timekeeper:'', notes:''}]}))} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--muted)', padding: '5px', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', letterSpacing: '0.5px', marginBottom: '2px' }}>+ Add match</button>
+                                              <button onClick={() => updDay(di, d => ({...d, matches: [...(d.matches||[]), {id:'m'+Date.now(), time:'', label:'', teamA:{name:'', handicap:null, players:[]}, teamB:{name:'', handicap:null, players:[]}, chukkas:4, umpires:'', commentator:'', goalJudges:'', timekeeper:'', notes:''}]}))} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--muted)', padding: '5px', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', letterSpacing: '0.5px', marginBottom: '2px' }}>+ Add match</button>
                                             </div>
                                           ))}
                                           <button onClick={() => setDraft({...draft, days: [...(draft.days||[]), {id:'d'+Date.now(), dateLabel:'', ground:'', matches:[], prizegiving:false}]})} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--muted)', padding: '7px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>+ Add day</button>
