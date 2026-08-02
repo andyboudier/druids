@@ -86,23 +86,62 @@ live-score widget. The website and installable PWA work without any of this.
 1. **[developer.apple.com](https://developer.apple.com)** → *Certificates,
    Identifiers & Profiles* → **Identifiers** → register **three** App IDs
    (exact casing matters):
-   - `uk.co.druidspolo.poloact` — tick **Push Notifications**
-   - `uk.co.druidspolo.poloact.watchkitapp` — no capabilities
-   - `uk.co.druidspolo.poloact.DLPCScoreWidget` — no capabilities
+   - `uk.co.druidspolo.poloact`
+   - `uk.co.druidspolo.poloact.watchkitapp`
+   - `uk.co.druidspolo.poloact.DLPCScoreWidget`
+
+   None of them need capabilities. `@capacitor/push-notifications` is a
+   dependency but is never called: the chukka reminders use
+   `LocalNotifications`, which needs no capability or entitlement. Do **not**
+   add Push Notifications in Xcode unless the app actually starts using it —
+   it would add an unused `aps-environment` entitlement to sign and justify.
 2. **[appstoreconnect.apple.com](https://appstoreconnect.apple.com)** →
    **Apps → ＋ → New App**. Name it *Druids PoloACT*, primary language
    English (U.K.), bundle ID `uk.co.druidspolo.poloact`, pick an SKU, Full
    Access.
-3. On the Mac, clone this repo, then:
+3. ⚠️ **Cloning the repo is not enough to open the project.** `node_modules/`
+   and `ios/App/App/public/` are both gitignored, and
+   `ios/App/CapApp-SPM/Package.swift` pulls five Capacitor packages in by
+   relative filesystem path (`../../../node_modules/@capacitor/…`). Without
+   them Xcode fails package resolution outright:
+
+   > the package at '…/node_modules/@capacitor/app' cannot be accessed
+
+   So on the Mac, after cloning:
    ```sh
    cd druids-app
-   npm install --legacy-peer-deps
-   npm run build
-   npx cap sync ios
+   npm install --legacy-peer-deps   # creates node_modules/ — the SPM packages
+   npm run build                    # builds the web app into dist/
+   npx cap sync ios                 # copies it to ios/App/App/public/
    open ios/App/App.xcodeproj
    ```
-4. In Xcode, set your **Team** with Automatic signing on all three targets:
-   *App*, *DLPC Watch Watch App*, *DLPCScoreWidget*.
+   `npm run build` + `cap sync` matter as much as the install: skip them and
+   the app signs and launches to a blank white screen, because `public/` — the
+   web app itself — is missing. There is no `.xcworkspace`; this project uses
+   Swift Package Manager, not CocoaPods, so open the `.xcodeproj`.
+
+   If Xcode was already open when you ran these, it caches the failed
+   resolution — **File → Packages → Reset Package Caches**, or quit and reopen.
+4. In Xcode, set your **Team** with Automatic signing on all three targets.
+   Note the widget's target name differs from its bundle ID:
+
+   | Target in the TARGETS list | Bundle ID |
+   |---|---|
+   | `App` | `uk.co.druidspolo.poloact` |
+   | `DLPC Watch Watch App` | `uk.co.druidspolo.poloact.watchkitapp` |
+   | `DLPCScoreWidgetExtension` | `uk.co.druidspolo.poloact.DLPCScoreWidget` |
+
+   Then check it locally before involving Xcode Cloud: select the `App` scheme
+   and **Any iOS Device (arm64)** → **Product → Archive**. That exercises
+   signing, the SPM graph and the widget embed with far better error messages
+   than CI gives you.
+
+   The shared `App` scheme is already committed at
+   `ios/App/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme`. Xcode Cloud can
+   only build *shared* schemes, and Xcode leaves them in `xcuserdata/`
+   (gitignored) until shared — so it is kept in the repo deliberately. Archiving
+   that one scheme produces the whole bundle: the watch app and widget are
+   embedded by the App target's build phases and need no schemes of their own.
 5. **Integrate → Create Workflow** (older Xcode: *Product → Xcode Cloud*). Grant
    GitHub access and click **Authorize** — this covers the public
    `ionic-team/capacitor-swift-pm` Swift package dependency. Install the Xcode
