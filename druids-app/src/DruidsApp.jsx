@@ -899,7 +899,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Captain PIN — visible in source, this is a soft gate not real security
-  const CAPTAIN_PIN = '2222';
+  const CAPTAIN_PIN = '2004';
 
   // Booking cutoff: every chukka day closes 24 hours before its throw-in.
   // Captain mode always bypasses it.
