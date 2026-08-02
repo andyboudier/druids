@@ -11,12 +11,12 @@ import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 // (env vars win, so a preview deployment can point at a different project).
 const env = import.meta.env || {};
 export const firebaseConfig = {
-  apiKey:            env.VITE_FIREBASE_API_KEY             || 'REPLACE_WITH_FIREBASE_API_KEY',
+  apiKey:            env.VITE_FIREBASE_API_KEY             || 'AIzaSyCjY5hYuctqdNz-xMgCA-BqieMoXtuTK7U',
   authDomain:        env.VITE_FIREBASE_AUTH_DOMAIN         || 'druids-lodge-polo.firebaseapp.com',
   projectId:         env.VITE_FIREBASE_PROJECT_ID          || 'druids-lodge-polo',
   storageBucket:     env.VITE_FIREBASE_STORAGE_BUCKET      || 'druids-lodge-polo.firebasestorage.app',
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || 'REPLACE_WITH_MESSAGING_SENDER_ID',
-  appId:             env.VITE_FIREBASE_APP_ID              || 'REPLACE_WITH_APP_ID',
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '419429996800',
+  appId:             env.VITE_FIREBASE_APP_ID              || '1:419429996800:web:08b9263a6dc7bd860c3be5',
 };
 
 export const app = initializeApp(firebaseConfig);
