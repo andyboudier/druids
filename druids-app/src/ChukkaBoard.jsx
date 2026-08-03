@@ -5,7 +5,7 @@ import React, { useState, useMemo, useRef } from 'react';
 // roster on the left, the draw in the middle, the day's settings on the right.
 //
 // Like FixtureBoard, this is a second *view*, not a second implementation.
-// Every mutation goes through functions handed in from DruidsApp.jsx — the same
+// Every mutation goes through functions handed in from the club app — the same
 // ones the phone uses — so the two views cannot drift apart. Mobile renders
 // exactly what it always did; this only mounts above the desktop breakpoint.
 //
@@ -37,7 +37,7 @@ const sideOf = (ck, id) => (
 
 export default function ChukkaBoard({
   // Which day
-  dayKeys, dayConfig, dayKey, setDayKey, rosterCounts,
+  clubName, dayKeys, dayConfig, dayKey, setDayKey, rosterCounts,
   // The day's data
   players, schedule, throwInMin, ground, groundOptions, chukkaTime, totalChukkas,
   // Draw state
@@ -50,7 +50,7 @@ export default function ChukkaBoard({
   // Draw edits
   setCell, onGenerate, onClearDraw,
   // Exports and snapshots
-  onWhatsApp, onXLSX, onPNG, rosterBackups, loadBackups, restoreBackup,
+  onWhatsApp, onXLSX, onPNG, rosterBackups = [], loadBackups, restoreBackup,
   // The sign-up form, wired straight to the phone's handleAdd
   signUp, handicapOptions,
   error, onClose,
@@ -106,7 +106,7 @@ export default function ChukkaBoard({
     <div style={S.wrap}>
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <div style={S.bar}>
-        <div style={S.barName}>Druids Lodge Polo Club</div>
+        <div style={S.barName}>{clubName}</div>
         <span style={S.sep} />
         <div style={S.dayPick} role="group" aria-label="Chukka day">
           {dayKeys.map(k => (
@@ -514,6 +514,7 @@ export default function ChukkaBoard({
             </Section>
           )}
 
+          {loadBackups && (
           <Section title="Roster snapshots">
             <button onClick={() => { const n = !showBackups; setShowBackups(n); if (n) loadBackups(); }} style={S.btnWide}>
               {showBackups ? 'Hide snapshots' : 'Show snapshots'}
@@ -539,6 +540,7 @@ export default function ChukkaBoard({
                 </div>
             )}
           </Section>
+          )}
         </aside>
       </div>
     </div>

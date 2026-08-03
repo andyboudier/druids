@@ -7,11 +7,11 @@ import React, { useState, useMemo, useRef } from 'react';
 //
 // This is a second *view* of the fixture editor, not a second implementation.
 // Every mutation goes through the updDay / updMatch / updTeam / setDraft
-// functions handed in from DruidsApp.jsx, which are the same ones the mobile
+// functions handed in from the club app, which are the same ones the mobile
 // editor uses and which write straight to Firestore. Nothing is duplicated, so
 // the two views cannot drift apart in behaviour.
 //
-// Mobile is untouched: DruidsApp.jsx only renders this above the desktop
+// Mobile is untouched: the club app only renders this above the desktop
 // breakpoint, and renders exactly what it always did below it.
 //
 // Why teams-first. Across every TPPC fixture with squads entered, teams are

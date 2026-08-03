@@ -4576,6 +4576,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             captain-only, and every edit runs through the phone's own updaters. */}
         {isDesktop && captainMode && chukkaBoardOpen && (
           <ChukkaBoard
+            clubName="Druids Lodge Polo Club"
             dayKeys={DAY_KEYS}
             dayConfig={DAY_CONFIG}
             dayKey={activeDay}
