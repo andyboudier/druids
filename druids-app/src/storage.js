@@ -11,6 +11,9 @@ import {
   collection,
   getDocs,
   onSnapshot,
+  query,
+  where,
+  documentId,
 } from 'firebase/firestore';
 // Single shared Firestore instance (initialised with an on-device IndexedDB
 // cache in firebase.js) — do NOT initialise a second app/Firestore here.
@@ -28,6 +31,12 @@ const cache = new Map(); // `${collection}/${key}` → value
 // network fetch runs at most once per session even if primeShared is called
 // again (e.g. loadAll re-running on a remote change).
 let primeSharedPromise = null;
+
+// Restore-only blobs kept OUT of the cold-start prime (see primeShared). The
+// fixture-details backup history is ~900KB — the bulk of the whole dataset —
+// and is only read when the captain opens the backups/restore UI, so it's
+// fetched on demand instead of sitting on the critical path of every app open.
+const PRIME_EXCLUDE_KEYS = ['fixture-details-backups'];
 
 const storage = {
   async get(key, shared = false) {
@@ -80,15 +89,21 @@ const storage = {
   // listeners below keep the cache fresh afterwards.
   primeShared() {
     if (primeSharedPromise) return primeSharedPromise;
-    primeSharedPromise = getDocs(collection(db, collectionName(true)))
-      .then((snap) => {
-        snap.forEach((d) => {
-          const data = d.data();
-          if (data && Object.prototype.hasOwnProperty.call(data, 'value')) {
-            cache.set(`${collectionName(true)}/${d.id}`, data.value);
-          }
-        });
-      })
+    const populate = (snap) => {
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data && Object.prototype.hasOwnProperty.call(data, 'value')) {
+          cache.set(`${collectionName(true)}/${d.id}`, data.value);
+        }
+      });
+    };
+    const shared = collection(db, collectionName(true));
+    // Fetch everything EXCEPT the big restore-only backup blobs. If the
+    // documentId not-in filter is ever rejected, fall back to reading the whole
+    // collection so a cold start still primes (just a little heavier).
+    primeSharedPromise = getDocs(query(shared, where(documentId(), 'not-in', PRIME_EXCLUDE_KEYS)))
+      .then(populate)
+      .catch(() => getDocs(shared).then(populate))
       .catch(() => { primeSharedPromise = null; /* let a later call retry */ });
     return primeSharedPromise;
   },
@@ -121,7 +136,6 @@ const SYNC_KEYS = [
   'transactions',            // recorded payments (manual mark-paid / Stripe later)
   'fixture-details',         // match details / teams shown on the fixtures tab
   'teams-db',
-  'fixture-details-backups',
   'roster-backups',          // gzip snapshots of the chukka rosters (retention 50)
 ];
 
