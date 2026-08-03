@@ -7,11 +7,11 @@ import React, { useState, useMemo, useRef } from 'react';
 //
 // This is a second *view* of the fixture editor, not a second implementation.
 // Every mutation goes through the updDay / updMatch / updTeam / setDraft
-// functions handed in from DruidsApp.jsx, which are the same ones the mobile
+// functions handed in from the club app, which are the same ones the mobile
 // editor uses and which write straight to Firestore. Nothing is duplicated, so
 // the two views cannot drift apart in behaviour.
 //
-// Mobile is untouched: DruidsApp.jsx only renders this above the desktop
+// Mobile is untouched: the club app only renders this above the desktop
 // breakpoint, and renders exactly what it always did below it.
 //
 // Why teams-first. Across every TPPC fixture with squads entered, teams are
@@ -56,7 +56,7 @@ const fmtGoals = (g) => (g === 0.5 ? '½' : (g % 1 ? `${Math.floor(g)}½` : Stri
 export default function FixtureBoard({
   fixture, draft, setDraft, updDay, updMatch, updTeam, moveMatch,
   teamsDb, playerDb, groundOptions, teamColours, teamColourKey,
-  saveTeam, deleteTeam,
+  saveTeam, deleteTeam, setTeamColour,
   interestCount, interestClosesAt, interestClosed,
   onClose, onPrint,
 }) {
@@ -250,6 +250,7 @@ export default function FixtureBoard({
               {teams.map(t => (
                 <TeamCard
                   key={norm(t.name)} team={t} colour={colourOf(t.name)}
+                  teamColours={teamColours} setColour={(k) => setTeamColour(t.name, k)}
                   open={openKey === norm(t.name)}
                   onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
                   onDragStart={() => { dragged.current = t; }}
@@ -265,6 +266,7 @@ export default function FixtureBoard({
                   {availableTeams.map(t => (
                     <TeamCard
                       key={norm(t.name)} team={{ ...t, slots: [] }} colour={colourOf(t.name)}
+                      teamColours={teamColours} setColour={(k) => setTeamColour(t.name, k)}
                       open={openKey === norm(t.name)}
                       onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
                       onDragStart={() => { dragged.current = t; }}
@@ -483,7 +485,7 @@ export default function FixtureBoard({
 }
 
 // ── Team card in the rail ──────────────────────────────────────────────────
-function TeamCard({ team, colour, open, onToggle, onDragStart, onRename, onPlayers, onDelete, playerDb }) {
+function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDragStart, onRename, onPlayers, onDelete, playerDb }) {
   const S = styles;
   const inFixture = (team.slots || []).length > 0;
   const setPlayer = (i, patch) => {
@@ -532,6 +534,22 @@ function TeamCard({ team, colour, open, onToggle, onDragStart, onRename, onPlaye
               </div>
             );
           })}
+          {teamColours && setColour && (
+            <div style={S.swatches}>
+              <span style={S.fieldLabel}>Shirts</span>
+              {teamColours.map(c => (
+                <button key={c.key} onClick={() => setColour(c.key === (colour && colour.key) ? null : c.key)}
+                  aria-pressed={!!colour && colour.key === c.key} title={c.name}
+                  style={{ ...S.swatch, background: c.hex,
+                    ...(colour && colour.key === c.key ? S.swatchOn : null) }}>
+                  <span style={S.srOnly}>{c.name}</span>
+                </button>
+              ))}
+              {colour && (
+                <button onClick={() => setColour(null)} style={S.linkClear} title="No shirt colour">clear</button>
+              )}
+            </div>
+          )}
           <div style={S.teamFoot}>
             <span style={S.hint}>
               {inFixture
@@ -674,6 +692,11 @@ const styles = {
   teamLi: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5 },
   pEdit: { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 },
   teamFoot: { display: 'flex', alignItems: 'flex-end', gap: 8, marginTop: 2 },
+  swatches: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, margin: '8px 0 2px' },
+  swatch: { width: 17, height: 17, borderRadius: '50%', border: '1px solid rgba(0,0,0,0.22)', padding: 0, cursor: 'pointer', flexShrink: 0 },
+  swatchOn: { boxShadow: '0 0 0 2px var(--cream-pale), 0 0 0 4px var(--gold-bright)' },
+  linkClear: { background: 'none', border: 0, padding: 0, font: 'inherit', fontSize: 10.5, color: 'var(--muted)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 },
+  srOnly: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' },
   addTeamBtn: { width: '100%', padding: '9px 10px', border: '1px dashed var(--line)', borderRadius: 8, background: 'transparent', font: 'inherit', fontSize: 12, fontWeight: 600, color: 'var(--muted)', cursor: 'pointer', marginBottom: 10 },
   newTeam: { border: '1px solid var(--gold-bright)', borderRadius: 8, padding: 10, marginBottom: 10, background: 'var(--cream-warm)', display: 'flex', flexDirection: 'column', gap: 7 },
   newTeamRow: { display: 'flex', gap: 6 },
