@@ -2616,14 +2616,24 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     });
   };
 
-  // Shirt colour belongs to the team, not to one match. Captains set it once on
-  // the live scoreboard and every later match involving that squad inherits it.
-  const rememberTeamColour = (teamName, colourKey) => {
+  // Shirt colour belongs to the team, not to one match. Set (or clear, with a
+  // null key) the colour a squad plays in: the captain can pick it on the team
+  // board before a ball is thrown in, and the live scoreboard writes the same
+  // field when a colour is chosen there.
+  const setTeamColour = (teamName, colourKey) => {
     const key = (teamName || '').trim().toLowerCase();
-    if (!key || !colourKey) return;
+    if (!key) return;
     const prev = teamsDb[key] || { name: teamName.trim(), handicap: null, players: [] };
-    if (prev.colour === colourKey) return;
-    saveTeamsDb({ ...teamsDb, [key]: { ...prev, colour: colourKey } });
+    if ((prev.colour || null) === (colourKey || null)) return;
+    const entry = { ...prev };
+    if (colourKey) entry.colour = colourKey; else delete entry.colour;
+    saveTeamsDb({ ...teamsDb, [key]: entry });
+  };
+  // Live scoring only ever assigns a colour, never clears one, so a blank key
+  // there means "nothing was chosen" rather than "unset it".
+  const rememberTeamColour = (teamName, colourKey) => {
+    if (!colourKey) return;
+    setTeamColour(teamName, colourKey);
   };
   // The colour a squad last wore, if any.
   const teamColourKey = (teamName) => {
@@ -4549,6 +4559,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               teamColourKey={teamColourKey}
               saveTeam={saveTeamEntry}
               deleteTeam={deleteTeamEntry}
+              setTeamColour={setTeamColour}
               interestCount={(interest[fx.id] || []).length}
               interestClosesAt={interestClosesAt(fx)}
               interestClosed={isInterestClosed(fx)}
@@ -4611,6 +4622,24 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             error={error}
             onClose={() => setChukkaBoardOpen(false)}
           />
+        )}
+        {/* Loading screen — shown until the first data load completes. Kept
+            visually consistent across the TPPC, Druids and Vaux apps. */}
+        {!loaded && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              position: 'fixed', inset: 0, zIndex: 9999, background: '#000',
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              justifyContent: 'center', gap: '22px',
+              paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            }}
+          >
+            <img src="/crest.svg" alt="Druids Lodge Polo Club" width="88" height="88" style={{ width: '88px', height: '88px' }} />
+            <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.22)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <div style={{ color: '#fff', fontFamily: "'Outfit', system-ui, sans-serif", fontSize: '11px', letterSpacing: '2px', textTransform: 'uppercase', opacity: 0.75 }}>Loading…</div>
+          </div>
         )}
         {/* Masthead */}
         <header
@@ -6475,7 +6504,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                   </div>
                                 ))}
 
-                                {!isTournamentActive(fx) && (showTeamForm ? (
+                                {!isPast && !isTournamentActive(fx) && (showTeamForm ? (
                                   <div className="register-form" style={{ marginTop: '12px' }}>
                                     <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '10px' }}>Enter a team</div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
