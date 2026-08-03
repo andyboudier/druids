@@ -24,6 +24,11 @@ const collectionName = (shared) => (shared ? 'shared' : 'private');
 // out to all other devices in real time.
 const cache = new Map(); // `${collection}/${key}` → value
 
+// Memoised promise for the one-shot bulk prime (see primeShared below), so the
+// network fetch runs at most once per session even if primeShared is called
+// again (e.g. loadAll re-running on a remote change).
+let primeSharedPromise = null;
+
 const storage = {
   async get(key, shared = false) {
     const cacheKey = `${collectionName(shared)}/${key}`;
@@ -64,6 +69,28 @@ const storage = {
       if (!prefix || d.id.startsWith(prefix)) keys.push(d.id);
     });
     return { keys, prefix, shared };
+  },
+
+  // Warm the in-memory cache with a SINGLE bulk read of the whole `shared`
+  // collection. The app's first load (loadAll in the club component) reads ~50
+  // shared keys; without this, each is a separate getDoc round-trip run one
+  // after another, which is what makes a cold start take ~30s. Priming turns
+  // all of those into cache hits behind one collection fetch. Memoised so the
+  // network round-trip happens at most once per session; the live onSnapshot
+  // listeners below keep the cache fresh afterwards.
+  primeShared() {
+    if (primeSharedPromise) return primeSharedPromise;
+    primeSharedPromise = getDocs(collection(db, collectionName(true)))
+      .then((snap) => {
+        snap.forEach((d) => {
+          const data = d.data();
+          if (data && Object.prototype.hasOwnProperty.call(data, 'value')) {
+            cache.set(`${collectionName(true)}/${d.id}`, data.value);
+          }
+        });
+      })
+      .catch(() => { primeSharedPromise = null; /* let a later call retry */ });
+    return primeSharedPromise;
   },
 };
 

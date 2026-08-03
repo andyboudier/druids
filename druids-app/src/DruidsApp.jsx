@@ -1160,6 +1160,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // Load shared data
   useEffect(() => {
     const loadAll = async () => {
+      // Warm the cache with ONE bulk read of the shared collection before the
+      // per-key reads below. Without this, loadAll fans out into ~50 sequential
+      // Firestore round-trips on a cold start (the cause of the ~30s hang); with
+      // it, every window.storage.get(...) call here is an instant cache hit.
+      try { await window.storage.primeShared(); } catch (e) {}
       // Auto-clear stale rosters per day: if a roster was stamped for a past
       // day, that day's chukkas are done — wipe it from Firestore so the next
       // person sees a fresh empty roster for the upcoming day.
