@@ -5906,6 +5906,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                       const teamsHere = teamSignups[fx.id] || [];
                       const fxDays = fixtureDays(fx);
                       const isExpanded = expandedId === fx.id;
+                      // A fixture is "past" once its last day has fully elapsed. Past
+                      // fixtures no longer invite sign-ups (the register-interest CTA
+                      // is hidden — see below). Unparseable dates default to not-past.
+                      const fxRange = parseFixtureDateRange(fx);
+                      const isPast = fxRange ? fxRange.end.getTime() < Date.now() : false;
                       return (
                         <div key={fx.id} data-fixture-id={fx.id} className={`fixture-card ${isExpanded ? 'expanded' : ''}`}>
                           <div className="fixture-header" onClick={() => toggleFixture(fx.id)}>
@@ -5945,6 +5950,17 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                   <button onClick={() => openEditFixture(fx)} style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--burgundy)', padding: '5px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>✎ Edit fixture{fx.adhoc ? ' (ad hoc)' : ''}</button>
                                 </div>
                               ))}
+                              {/* Team board / match-details entry point, pinned to the TOP
+                                  of the fixture. On mobile this is the primary "edit match"
+                                  button; on desktop it opens the team board (and is repeated
+                                  at the bottom too, so it's always within reach). */}
+                              {captainMode && editingDetailsId !== fx.id && (
+                                <button onClick={() => (isDesktop ? setBoardFixtureId(fx.id) : setEditingDetailsId(fx.id))} style={{ width: '100%', background: 'transparent', border: '1px solid var(--burgundy)', color: 'var(--burgundy)', padding: '10px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase', cursor: 'pointer', margin: '12px 0 4px' }}>
+                                  {isDesktop
+                                    ? (fixtureDetails[fx.id] ? 'Open team board' : '+ Build the teams and draw')
+                                    : (fixtureDetails[fx.id] ? 'Edit match details' : '+ Add match details')}
+                                </button>
+                              )}
                               {/* ── Fixture match details ── */}
                               {(() => {
                                 const det = fixtureDetails[fx.id];
@@ -6141,11 +6157,12 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                         })()}
                                       </div>
                                     ))}
-                                    {captainMode && !isEditingThis && (
-                                      <button onClick={() => (isDesktop ? setBoardFixtureId(fx.id) : setEditingDetailsId(fx.id))} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--muted)', padding: '7px', borderRadius: '4px', fontSize: '11px', letterSpacing: '1px', textTransform: 'uppercase', cursor: 'pointer', marginBottom: '10px' }}>
-                                        {isDesktop
-                                          ? (det ? 'Open team board' : '+ Build the teams and draw')
-                                          : (det ? 'Edit match details' : '+ Add match details')}
+                                    {/* Second copy of the team-board button at the BOTTOM,
+                                        desktop only — the mobile entry point lives at the top
+                                        of the fixture, so on phones it isn't repeated here. */}
+                                    {captainMode && !isEditingThis && isDesktop && (
+                                      <button onClick={() => setBoardFixtureId(fx.id)} style={{ width: '100%', background: 'transparent', border: '1px solid var(--burgundy)', color: 'var(--burgundy)', padding: '10px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase', cursor: 'pointer', marginBottom: '10px' }}>
+                                        {det ? 'Open team board' : '+ Build the teams and draw'}
                                       </button>
                                     )}
                                     {isEditingThis && (() => {
@@ -6591,13 +6608,15 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                     </div>
                                   ))}
                                 </div>
-                              ) : (
+                              ) : isPast ? null : (
                                 <div style={{ paddingTop: '14px', textAlign: 'center', fontSize: '13px', color: 'var(--muted)' }} className="display-italic">
                                   Be the first to register.
                                 </div>
                               )}
 
-                              {!isTournamentActive(fx) ? (
+                              {/* Past fixtures no longer take sign-ups: the whole
+                                  register-interest form is hidden once the fixture is over. */}
+                              {isPast ? null : !isTournamentActive(fx) ? (
                               <div className="register-form">
                                 <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '10px' }}>Register your interest</div>
                                 {(() => {
