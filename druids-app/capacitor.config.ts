@@ -13,11 +13,14 @@ const config: CapacitorConfig = {
     handleApplicationNotifications: true,
   },
   server: {
-    // Remote-load mode: the app loads the live web app from Vercel, so web
-    // changes appear instantly without re-archiving. Native/Watch changes still
-    // need an archive. To revert to local-bundle (friendlier for App Store
-    // submission review), comment out the url + cleartext lines below.
-    url: 'https://druids-tpd4.vercel.app',
+    // Remote-load mode: the app loads the live web app (the club's own
+    // poloact.co.uk domain, served by Vercel), so web changes appear instantly
+    // without re-archiving. Native/Watch changes still need an archive. To
+    // revert to local-bundle (friendlier for App Store submission review),
+    // comment out the url + cleartext lines below.
+    // NOTE: changing this URL points the app at a different origin, so each
+    // device re-downloads the shell once before caches warm up again.
+    url: 'https://druids.poloact.co.uk',
     cleartext: false,
     androidScheme: 'https',
     iosScheme: 'https',
