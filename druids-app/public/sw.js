@@ -101,4 +101,3 @@ self.addEventListener('fetch', (event) => {
 
   // Everything else on our origin: just go to the network.
 });
-</content>
