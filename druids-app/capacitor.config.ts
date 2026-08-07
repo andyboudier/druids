@@ -27,6 +27,11 @@ const config: CapacitorConfig = {
   },
   plugins: {
     SplashScreen: {
+      // src/main.jsx calls SplashScreen.hide() as soon as React paints, so on a
+      // normal launch the splash clears well before this duration — it is not a
+      // fixed wait. launchAutoHide stays true as the failsafe for the case where
+      // that code never runs (bundle fails to load, offline cold start), so the
+      // splash can never strand the app on a static image.
       launchShowDuration: 1500,
       launchAutoHide: true,
       backgroundColor: '#231F20', // club ink
