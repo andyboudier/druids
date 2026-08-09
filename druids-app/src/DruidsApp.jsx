@@ -1315,9 +1315,21 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       setLoaded(true);
     };
     loadAll();
-    const onRemoteChange = () => loadAll();
+    // Remote changes arrive one event per key, and a single captain action can
+    // touch several keys at once (e.g. saving a draw writes the schedule and
+    // un-publishes it). loadAll is expensive — dozens of reads and setState
+    // calls — so collapse a burst into ONE reload instead of running it per
+    // key. The delay stays imperceptible for live cross-device sync.
+    let burstTimer = null;
+    const onRemoteChange = () => {
+      if (burstTimer) clearTimeout(burstTimer);
+      burstTimer = setTimeout(() => { burstTimer = null; loadAll(); }, 200);
+    };
     window.addEventListener('storage-changed', onRemoteChange);
-    return () => window.removeEventListener('storage-changed', onRemoteChange);
+    return () => {
+      if (burstTimer) clearTimeout(burstTimer);
+      window.removeEventListener('storage-changed', onRemoteChange);
+    };
   }, []);
 
   // When the throw-in time changes, clear any pending availableFrom / availableTo

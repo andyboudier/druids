@@ -141,13 +141,20 @@ const SYNC_KEYS = [
 
 SYNC_KEYS.forEach((key) => {
   const cacheKey = `shared/${key}`;
+  // Every listener fires once immediately on registration with the current
+  // server state. That first callback is the INITIAL READ, not a remote change:
+  // primeShared and the app's own first load already cover it. Dispatching for
+  // it made the app reload everything once per key on every boot, so the cache
+  // is still updated but the event is suppressed.
+  let primed = false;
   onSnapshot(doc(db, 'shared', key), (snap) => {
     if (snap.exists()) {
       cache.set(cacheKey, snap.data().value);
     } else {
       cache.delete(cacheKey);
     }
-    // Tell the app a remote change happened so it can re-render
+    if (!primed) { primed = true; return; }
+    // Tell the app a genuine remote change happened so it can re-render
     window.dispatchEvent(new CustomEvent('storage-changed', { detail: { key } }));
   });
 });
