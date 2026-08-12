@@ -115,93 +115,101 @@ const storage = {
     return { keys, prefix, shared };
   },
 
-  // Warm the in-memory cache with a SINGLE bulk read of the whole `shared`
-  // collection. The app's first load (loadAll in the club component) reads ~50
-  // shared keys; without this, each is a separate getDoc round-trip run one
-  // after another, which is what makes a cold start take ~30s. Priming turns
-  // all of those into cache hits behind one collection fetch. Memoised so the
-  // network round-trip happens at most once per session; the live onSnapshot
-  // listeners below keep the cache fresh afterwards.
+  // Resolves once the shared collection has been read into the cache, so the
+  // app's first load can treat every window.storage.get(...) as a cache hit
+  // instead of ~50 separate round-trips.
+  //
+  // There is no fetch of its own here any more: the single live listener below
+  // delivers the whole collection in its first snapshot, and that snapshot IS
+  // the prime. Issuing a getDocs as well would have pulled the same ~185KB
+  // twice on every cold start. Still memoised — callers share one promise.
   primeShared() {
-    if (primeSharedPromise) return primeSharedPromise;
-    const populate = (snap) => {
-      snap.forEach((d) => {
-        // Record the id whether or not it carries a `value` field, so a doc
-        // that exists in an odd shape is never mistaken for an absent one.
-        sharedDocIds.add(d.id);
-        const data = d.data();
-        if (data && Object.prototype.hasOwnProperty.call(data, 'value')) {
-          cache.set(`${collectionName(true)}/${d.id}`, data.value);
-        }
-      });
-      sharedPrimed = true;
-    };
-    const shared = collection(db, collectionName(true));
-    // Fetch everything EXCEPT the big restore-only backup blobs. If the
-    // documentId not-in filter is ever rejected, fall back to reading the whole
-    // collection so a cold start still primes (just a little heavier).
-    primeSharedPromise = getDocs(query(shared, where(documentId(), 'not-in', PRIME_EXCLUDE_KEYS)))
-      .then(populate)
-      .catch(() => getDocs(shared).then(populate))
-      .catch(() => { primeSharedPromise = null; /* let a later call retry */ });
     return primeSharedPromise;
   },
 };
 
-// ── Live sync: subscribe to every shared key the app uses ────────────
-// When Firestore changes (from this device OR any other), update the cache
-// AND dispatch a window-level event so React components can re-read.
-// IMPORTANT: every persistent *shared* key must appear here or it silently won't
-// sync across devices. Per-day keys follow DruidsApp.jsx's storageKey scheme:
-// `base-<day>` for every chukka day. Keep DAYS in step with DAY_KEYS there.
-const DAYS = ['thu', 'sat', 'sun'];
-const perDay = (base) => DAYS.map((d) => `${base}-${d}`);
+// ── Live sync: ONE listener for the whole shared collection ────────────
+// When Firestore changes (from this device OR any other), update the cache AND
+// dispatch a window-level event so React components can re-read.
+//
+// This used to be one onSnapshot per key — 32 of them. They shared a single
+// WebChannel, but the SDK flushes target registrations as separate sequential
+// POSTs, so cold start paid ~19 round-trips just to say "subscribe" before any
+// data moved. One collection listener is one target: one round-trip.
+//
+// It also removes a standing footgun. The old list had to be maintained by
+// hand, and any persistent shared key missing from it silently never synced
+// across devices. A collection listener covers every key by construction.
+//
+// The excluded restore-only blobs stay out of the subscription: they are
+// ~900KB, only the backups/restore UI reads them, and re-streaming that on
+// every unrelated change was pure cost. get() still fetches them on demand.
+const sharedCollection = collection(db, collectionName(true));
 
-const SYNC_KEYS = [
-  ...perDay('roster'),          // rosters for every day
-  ...perDay('roster-week'),     // roster week-stamps (drive auto-clear)
-  ...perDay('schedule'),        // drawn chukka schedules
-  ...perDay('throwin'),         // per-day throw-in times
-  ...perDay('ground'),          // which ground that day is played on
-  ...perDay('booking-closed'),  // captain's manual "session full" toggle
-  ...perDay('draw-published'),  // whether the draw is visible to players
-  'fixture-interest',
-  'wa-link',
-  'members',
-  'team-signups',
-  'fixtures',
-  'players',                 // captain-managed player database
-  'subsidies',               // captain-managed subsidy pots (payment screen)
-  'transactions',            // recorded payments (manual mark-paid / Stripe later)
-  'fixture-details',         // match details / teams shown on the fixtures tab
-  'teams-db',
-  'roster-backups',          // gzip snapshots of the chukka rosters (retention 50)
-];
-
-SYNC_KEYS.forEach((key) => {
-  const cacheKey = `shared/${key}`;
-  // Every listener fires once immediately on registration with the current
-  // server state. That first callback is the INITIAL READ, not a remote change:
-  // primeShared and the app's own first load already cover it. Dispatching for
-  // it made the app reload everything once per key on every boot, so the cache
-  // is still updated but the event is suppressed.
-  let primed = false;
-  onSnapshot(doc(db, 'shared', key), (snap) => {
-    if (snap.exists()) {
-      sharedDocIds.add(key);
-      cache.set(cacheKey, snap.data().value);
-    } else {
-      // Cache the absence instead of clearing the entry. A live listener that
-      // says "no document" is authoritative, so a later get() can answer from
-      // it; clearing sent the next read back to the server.
+const applySnapshot = (snap, { dispatch }) => {
+  snap.docChanges().forEach((change) => {
+    const key = change.doc.id;
+    const cacheKey = `${collectionName(true)}/${key}`;
+    if (change.type === 'removed') {
+      // Cache the absence rather than clearing the entry: a listener reporting
+      // a removal is authoritative, so the next get() can answer from it.
       sharedDocIds.delete(key);
       cache.set(cacheKey, ABSENT);
+    } else {
+      sharedDocIds.add(key);
+      const data = change.doc.data();
+      if (data && Object.prototype.hasOwnProperty.call(data, 'value')) {
+        cache.set(cacheKey, data.value);
+      }
     }
-    if (!primed) { primed = true; return; }
-    // Tell the app a genuine remote change happened so it can re-render
-    window.dispatchEvent(new CustomEvent('storage-changed', { detail: { key } }));
+    // The FIRST snapshot is the initial read, not a remote change — every doc
+    // arrives as an 'added' change. Dispatching for it made the app reload
+    // everything once per key on every boot, so it is suppressed; the prime and
+    // the app's own first load already cover it.
+    if (dispatch) {
+      window.dispatchEvent(new CustomEvent('storage-changed', { detail: { key } }));
+    }
   });
-});
+};
+
+let settlePrime;
+primeSharedPromise = new Promise((resolve) => { settlePrime = resolve; });
+const settleOnce = () => { if (settlePrime) { settlePrime(); settlePrime = null; } };
+
+// Last resort: never let a stalled subscription wedge the app's first load. If
+// no snapshot has arrived by now, release loadAll to do its own per-key reads —
+// slower, but the old behaviour, and it always terminates.
+const primeTimeout = setTimeout(settleOnce, 5000);
+
+let firstSnapshotSeen = false;
+
+const subscribe = (q, { withFallback }) => onSnapshot(
+  q,
+  (snap) => {
+    applySnapshot(snap, { dispatch: firstSnapshotSeen });
+    firstSnapshotSeen = true;
+    // Only treat the collection as fully known once it has come from the
+    // server. A cache-only snapshot may be partial, and negative caching must
+    // never be switched on from a partial view.
+    if (!snap.metadata.fromCache) sharedPrimed = true;
+    clearTimeout(primeTimeout);
+    settleOnce();
+  },
+  () => {
+    // The documentId not-in filter was rejected. Fall back to subscribing to
+    // the whole collection so live sync survives, exactly as the bulk read used
+    // to fall back. Only one retry — a second failure releases the prime and
+    // leaves the app on per-key reads rather than looping.
+    if (withFallback) {
+      subscribe(sharedCollection, { withFallback: false });
+    } else {
+      clearTimeout(primeTimeout);
+      settleOnce();
+    }
+  },
+);
+
+subscribe(query(sharedCollection, where(documentId(), 'not-in', PRIME_EXCLUDE_KEYS)), { withFallback: true });
 
 // Make the storage object globally available — DruidsApp.jsx already uses
 // `window.storage.get(...)` so this preserves the existing API exactly.
