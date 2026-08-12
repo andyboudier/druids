@@ -25,12 +25,30 @@ const collectionName = (shared) => (shared ? 'shared' : 'private');
 // When DruidsApp.jsx calls get(), we return the cached value (synced from Firestore).
 // When it calls set(), we write to Firestore — and the listener pushes the change
 // out to all other devices in real time.
-const cache = new Map(); // `${collection}/${key}` → value
+const cache = new Map(); // `${collection}/${key}` → value | ABSENT
+
+// Sentinel meaning "this document is known NOT to exist". Caching absence is as
+// important as caching values: loadAll reads the per-day keys for every chukka
+// day plus `committee`, and most of those have no document at all (days with no
+// roster yet, a draw not published, a session not closed). getDoc on a missing
+// doc returns null, so without this every one of them missed the cache and cost
+// a full server round-trip — in series, inside loadAll's await loops — on EVERY
+// load, not just the first. That was the single largest contributor to cold
+// start.
+const ABSENT = Symbol('absent');
 
 // Memoised promise for the one-shot bulk prime (see primeShared below), so the
 // network fetch runs at most once per session even if primeShared is called
 // again (e.g. loadAll re-running on a remote change).
 let primeSharedPromise = null;
+
+// The ids actually present in `shared` as of the bulk prime, kept current by
+// set/delete and the live listeners. Because primeShared reads the WHOLE
+// collection (bar PRIME_EXCLUDE_KEYS), any key missing from this set after the
+// prime resolves is genuinely absent — which is what lets get() answer without
+// a round-trip.
+const sharedDocIds = new Set();
+let sharedPrimed = false;
 
 // Restore-only blobs kept OUT of the cold-start prime (see primeShared). The
 // fixture-details backup history is ~900KB — the bulk of the whole dataset —
@@ -42,11 +60,22 @@ const storage = {
   async get(key, shared = false) {
     const cacheKey = `${collectionName(shared)}/${key}`;
     if (cache.has(cacheKey)) {
-      return { key, value: cache.get(cacheKey), shared };
+      const value = cache.get(cacheKey);
+      return value === ABSENT ? null : { key, value, shared };
+    }
+    // The bulk prime read the entire `shared` collection, so once it has
+    // resolved, a key it didn't return has no document — answer from that
+    // knowledge instead of paying a round-trip to be told the same thing. The
+    // deliberately-skipped keys are the one exception: those still need a real
+    // read, because the prime never looked at them.
+    if (shared && sharedPrimed && !sharedDocIds.has(key) && !PRIME_EXCLUDE_KEYS.includes(key)) {
+      cache.set(cacheKey, ABSENT);
+      return null;
     }
     const snap = await getDoc(doc(db, collectionName(shared), key));
     if (snap.exists()) {
       const value = snap.data().value;
+      if (shared) sharedDocIds.add(key);
       cache.set(cacheKey, value);
       return { key, value, shared };
     }
@@ -56,6 +85,7 @@ const storage = {
   async set(key, value, shared = false) {
     const cacheKey = `${collectionName(shared)}/${key}`;
     cache.set(cacheKey, value);
+    if (shared) sharedDocIds.add(key);
     // Firestore rules require an authenticated client to write. Wait for the
     // silent anonymous sign-in so the first write of a session isn't rejected.
     await authReady;
@@ -65,7 +95,12 @@ const storage = {
 
   async delete(key, shared = false) {
     const cacheKey = `${collectionName(shared)}/${key}`;
-    cache.delete(cacheKey);
+    // Record the absence rather than dropping the entry: a deleted doc is a
+    // thing we KNOW doesn't exist, so the next read should not go to the server
+    // to rediscover that. This matters right after the roster auto-clear, which
+    // deletes up to three keys per day.
+    cache.set(cacheKey, ABSENT);
+    if (shared) sharedDocIds.delete(key);
     await authReady;
     await deleteDoc(doc(db, collectionName(shared), key));
     return { key, deleted: true, shared };
@@ -91,11 +126,15 @@ const storage = {
     if (primeSharedPromise) return primeSharedPromise;
     const populate = (snap) => {
       snap.forEach((d) => {
+        // Record the id whether or not it carries a `value` field, so a doc
+        // that exists in an odd shape is never mistaken for an absent one.
+        sharedDocIds.add(d.id);
         const data = d.data();
         if (data && Object.prototype.hasOwnProperty.call(data, 'value')) {
           cache.set(`${collectionName(true)}/${d.id}`, data.value);
         }
       });
+      sharedPrimed = true;
     };
     const shared = collection(db, collectionName(true));
     // Fetch everything EXCEPT the big restore-only backup blobs. If the
@@ -149,9 +188,14 @@ SYNC_KEYS.forEach((key) => {
   let primed = false;
   onSnapshot(doc(db, 'shared', key), (snap) => {
     if (snap.exists()) {
+      sharedDocIds.add(key);
       cache.set(cacheKey, snap.data().value);
     } else {
-      cache.delete(cacheKey);
+      // Cache the absence instead of clearing the entry. A live listener that
+      // says "no document" is authoritative, so a later get() can answer from
+      // it; clearing sent the next read back to the server.
+      sharedDocIds.delete(key);
+      cache.set(cacheKey, ABSENT);
     }
     if (!primed) { primed = true; return; }
     // Tell the app a genuine remote change happened so it can re-render
