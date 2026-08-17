@@ -65,10 +65,29 @@ export default function FixtureBoard({
   const [sel, setSel] = useState({ di: 0, mi: 0 });
   const [tab, setTab] = useState('teams');
   const [search, setSearch] = useState('');
+  // Separate from the players search so switching tabs doesn't carry a query
+  // across into a list where it means something different.
+  const [teamSearch, setTeamSearch] = useState('');
   const [dropTarget, setDropTarget] = useState(null); // `${di}:${mi}:${tk}`
   const [adding, setAdding] = useState(false);        // the "new team" form is open
   const [newName, setNewName] = useState('');
   const [openKey, setOpenKey] = useState(null);       // which team card is expanded
+  // The touch route to a drop. Holds the same payload shape as dragged.current:
+  // a team object, or { player }. See the comment on Slot's onClick for why a
+  // drag-only board is unusable on an iPad.
+  const [picked, setPicked] = useState(null);
+  const pickedIs = (payload) => {
+    if (!picked || !payload) return false;
+    if (payload.player) return !!picked.player && norm(picked.player.name) === norm(payload.player.name);
+    return !picked.player && norm(picked.name) === norm(payload.name);
+  };
+  // Escape cancels a pick, matching the new-team form and the search boxes.
+  React.useEffect(() => {
+    if (!picked) return undefined;
+    const on = (e) => { if (e.key === 'Escape') setPicked(null); };
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, [picked]);
   const dragged = useRef(null);
 
   const day = days[Math.min(dayIx, Math.max(0, days.length - 1))] || null;
@@ -99,6 +118,19 @@ export default function FixtureBoard({
       .filter(t => t && (t.name || '').trim() && !inFixture.has(norm(t.name)))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [teamsDb, teams]);
+
+  // Both rail lists are filtered by the same query, so a search says what the
+  // rail can show as a whole — a team you half-remember is found whether or not
+  // it is already in this fixture, which is exactly when you go looking for it.
+  const teamQuery = norm(teamSearch);
+  const shownTeams = useMemo(
+    () => (teamQuery ? teams.filter(t => norm(t.name).includes(teamQuery)) : teams),
+    [teams, teamQuery],
+  );
+  const shownAvailable = useMemo(
+    () => (teamQuery ? availableTeams.filter(t => norm(t.name).includes(teamQuery)) : availableTeams),
+    [availableTeams, teamQuery],
+  );
 
   const players = useMemo(() => {
     const q = norm(search);
@@ -225,8 +257,22 @@ export default function FixtureBoard({
               style={{ ...S.tab, ...(tab === 'players' ? S.tabOn : null) }}>Players · {(playerDb || []).length}</button>
           </div>
 
+          {picked && (
+            <div style={S.placing} role="status">
+              <span style={{ flex: 1 }}>
+                Placing <strong>{picked.player ? picked.player.name : picked.name}</strong> — tap a match slot
+              </span>
+              <button onClick={() => setPicked(null)} style={S.btnPlainSm}>Cancel</button>
+            </div>
+          )}
+
           {tab === 'teams' ? (
             <div style={S.railBody}>
+              {teams.length + availableTeams.length > 0 && (
+                <input value={teamSearch} onChange={e => setTeamSearch(e.target.value)}
+                  placeholder={`Search ${teams.length + availableTeams.length} teams…`} style={S.search}
+                  onKeyDown={e => { if (e.key === 'Escape') setTeamSearch(''); }} />
+              )}
               {adding ? (
                 <form style={S.newTeam} onSubmit={(e) => { e.preventDefault(); createTeam(); }}>
                   <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
@@ -242,34 +288,39 @@ export default function FixtureBoard({
                 <button onClick={() => setAdding(true)} style={S.addTeamBtn}>＋ New team</button>
               )}
 
-              {teams.length === 0 && !adding && (
+              {!teamQuery && teams.length === 0 && !adding && (
                 <p style={S.hint}>No teams in this fixture yet. Create one above, or type a name
                   straight into a match slot — either way it lands here and can be dragged into
                   every other match it plays.</p>
               )}
-              {teams.map(t => (
+              {teamQuery && shownTeams.length === 0 && shownAvailable.length === 0 && (
+                <p style={S.hint}>No team matches “{teamSearch.trim()}”.</p>
+              )}
+              {shownTeams.map(t => (
                 <TeamCard
                   key={norm(t.name)} team={t} colour={colourOf(t.name)}
                   teamColours={teamColours} setColour={(k) => setTeamColour(t.name, k)}
                   open={openKey === norm(t.name)}
                   onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
                   onDragStart={() => { dragged.current = t; }}
+                  picked={picked} setPicked={setPicked}
                   onRename={(v) => renameTeamEverywhere(t.name, v)}
                   onPlayers={(ps) => writeSquadEverywhere(t.name, ps, t.handicap)}
                   playerDb={playerDb}
                 />
               ))}
 
-              {availableTeams.length > 0 && (
+              {shownAvailable.length > 0 && (
                 <>
                   <div style={S.railHead}>Not in this fixture</div>
-                  {availableTeams.map(t => (
+                  {shownAvailable.map(t => (
                     <TeamCard
                       key={norm(t.name)} team={{ ...t, slots: [] }} colour={colourOf(t.name)}
                       teamColours={teamColours} setColour={(k) => setTeamColour(t.name, k)}
                       open={openKey === norm(t.name)}
                       onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
                       onDragStart={() => { dragged.current = t; }}
+                      picked={picked} setPicked={setPicked}
                       onRename={(v) => renameStoredTeam(t.name, v)}
                       onPlayers={(ps) => saveTeam({ ...t, players: ps })}
                       onDelete={deleteTeam ? () => deleteTeam(t.name) : null}
@@ -283,11 +334,13 @@ export default function FixtureBoard({
             <div style={S.railBody}>
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder={`Search ${(playerDb || []).length} members…`} style={S.search} />
-              <div style={S.hint}>Drag a player onto any squad slot.</div>
+              <div style={S.hint}>Drag a player onto any squad slot, or tap to pick then tap the slot.</div>
               {players.map(p => (
                 <div key={p.id} draggable
                   onDragStart={(e) => { dragged.current = { player: p }; e.dataTransfer.effectAllowed = 'copy'; }}
-                  style={S.pRow}>
+                  onClick={() => setPicked(pickedIs({ player: p }) ? null : { player: p })}
+                  role="button" aria-pressed={pickedIs({ player: p })}
+                  style={{ ...S.pRow, ...(pickedIs({ player: p }) ? S.pickedRow : null) }}>
                   <span style={S.hcap}>{p.handicap === null || p.handicap === undefined ? '—' : fmtH(p.handicap)}</span>
                   <span style={S.pName}>{p.name}</span>
                 </div>
@@ -360,7 +413,8 @@ export default function FixtureBoard({
                         colour={colourOf((m.teamA || {}).name)}
                         over={dropTarget === `${dayIx}:${mi}:teamA`}
                         setOver={setDropTarget} dragged={dragged}
-                        assignTeam={assignTeam} updTeam={updTeam} />
+                        assignTeam={assignTeam} updTeam={updTeam}
+                        picked={picked} setPicked={setPicked} />
                       <div style={S.vs}>
                         <span style={S.vsV}>v</span>
                         {hs && (
@@ -374,7 +428,8 @@ export default function FixtureBoard({
                         colour={colourOf((m.teamB || {}).name)}
                         over={dropTarget === `${dayIx}:${mi}:teamB`}
                         setOver={setDropTarget} dragged={dragged}
-                        assignTeam={assignTeam} updTeam={updTeam} />
+                        assignTeam={assignTeam} updTeam={updTeam}
+                        picked={picked} setPicked={setPicked} />
                     </div>
 
                     {(m.umpires || m.commentator) && (
@@ -485,8 +540,9 @@ export default function FixtureBoard({
 }
 
 // ── Team card in the rail ──────────────────────────────────────────────────
-function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDragStart, onRename, onPlayers, onDelete, playerDb }) {
+function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDragStart, picked, setPicked, onRename, onPlayers, onDelete, playerDb }) {
   const S = styles;
+  const isPicked = !!picked && !picked.player && norm(picked.name) === norm(team.name);
   const inFixture = (team.slots || []).length > 0;
   const setPlayer = (i, patch) => {
     const ps = clone(team.players || []);
@@ -505,7 +561,9 @@ function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDrag
   const rows = Math.max(4, (team.players || []).length);
 
   return (
-    <div draggable onDragStart={onDragStart} style={S.team} title="Drag into a match">
+    <div draggable onDragStart={onDragStart}
+      style={{ ...S.team, ...(isPicked ? S.teamPicked : null) }}
+      title="Drag into a match, or use ＋ to place it by tapping">
       <div style={S.teamHead} onClick={onToggle}>
         <ColourDot colour={colour} />
         <span style={S.teamName}>{team.name}</span>
@@ -513,6 +571,11 @@ function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDrag
         <span style={S.apps} title={inFixture ? `Plays ${team.slots.length} matches in this fixture` : 'Not in this fixture yet'}>
           {inFixture ? `${team.slots.length}×` : 'unused'}
         </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); setPicked(isPicked ? null : team); }}
+          aria-pressed={isPicked}
+          title={isPicked ? 'Tap a match slot to place it, or tap again to cancel' : 'Pick up, then tap a match slot'}
+          style={{ ...S.pick, ...(isPicked ? S.pickOn : null) }}>{isPicked ? '✓' : '＋'}</button>
         <span style={S.caret}>{open ? '▾' : '▸'}</span>
       </div>
       {open ? (
@@ -578,17 +641,15 @@ function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDrag
 }
 
 // ── A team slot on a match ─────────────────────────────────────────────────
-function Slot({ side, match, tk, di, mi, colour, over, setOver, dragged, assignTeam, updTeam }) {
+function Slot({ side, match, tk, di, mi, colour, over, setOver, dragged, assignTeam, updTeam, picked, setPicked }) {
   const S = styles;
   const team = match[tk] || {};
   const name = (team.name || '').trim();
   const key = `${di}:${mi}:${tk}`;
 
-  const onDrop = (e) => {
-    e.preventDefault();
-    setOver(null);
-    const payload = dragged.current;
-    dragged.current = null;
+  // Shared by the mouse drop and the tap-to-place route, so the two can never
+  // diverge in what they actually do to the match.
+  const place = (payload) => {
     if (!payload) return;
     if (payload.player) {
       const ps = clone(team.players || []);
@@ -601,6 +662,24 @@ function Slot({ side, match, tk, di, mi, colour, over, setOver, dragged, assignT
     }
   };
 
+  const onDrop = (e) => {
+    e.preventDefault();
+    setOver(null);
+    const payload = dragged.current;
+    dragged.current = null;
+    place(payload);
+  };
+
+  // iPadOS never fires dragstart from a finger — HTML5 drag-and-drop is
+  // mouse-only there — so on a tablet the rail could not be used at all, even
+  // though the board deliberately renders at that size (the desktop breakpoint
+  // is 1024px; an iPad in landscape is 1180-1366). Tap a team, then tap a slot.
+  const onClick = () => {
+    if (!picked) return;
+    place(picked);
+    setPicked(null);
+  };
+
   const base = side === 'A' ? S.slotA : S.slotB;
   const tint = colour ? { background: colour.hex, color: colour.text, borderColor: colour.hex } : null;
 
@@ -609,7 +688,10 @@ function Slot({ side, match, tk, di, mi, colour, over, setOver, dragged, assignT
       onDragOver={(e) => { e.preventDefault(); setOver(key); }}
       onDragLeave={() => setOver(null)}
       onDrop={onDrop}
-      style={{ ...S.slot, ...base, ...(tint || {}), ...(name ? null : S.slotEmpty), ...(over ? S.slotOver : null) }}
+      onClick={onClick}
+      role={picked ? 'button' : undefined}
+      aria-label={picked ? `Place ${picked.player ? picked.player.name : picked.name} here` : undefined}
+      style={{ ...S.slot, ...base, ...(tint || {}), ...(name ? null : S.slotEmpty), ...(over ? S.slotOver : null), ...(picked ? S.slotArmed : null) }}
     >
       {name ? (
         <>
@@ -630,7 +712,7 @@ function Slot({ side, match, tk, di, mi, colour, over, setOver, dragged, assignT
           </ol>
         </>
       ) : (
-        <span style={S.slotHint}>Drag a team here</span>
+        <span style={S.slotHint}>{picked ? 'Tap to place here' : 'Drag a team here, or tap one in the rail'}</span>
       )}
     </div>
   );
@@ -725,6 +807,12 @@ const styles = {
   slotB: { background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' },
   slotEmpty: { background: 'var(--cream-warm)', borderStyle: 'dashed', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' },
   slotOver: { borderColor: 'var(--gold-bright)', boxShadow: 'inset 0 0 0 2px rgba(251,180,21,0.35)' },
+  slotArmed: { outline: '2px dashed var(--gold-bright)', outlineOffset: 2, cursor: 'pointer' },
+  pick: { border: '1px solid var(--line)', background: '#fff', borderRadius: 5, width: 22, height: 22, lineHeight: '18px', padding: 0, font: 'inherit', fontSize: 13, color: 'var(--muted)', cursor: 'pointer', flexShrink: 0 },
+  pickOn: { background: 'var(--gold-bright)', borderColor: 'var(--gold-bright)', color: '#3a2d05', fontWeight: 700 },
+  teamPicked: { boxShadow: '0 0 0 2px var(--gold-bright)' },
+  pickedRow: { boxShadow: 'inset 0 0 0 2px var(--gold-bright)' },
+  placing: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', margin: '0 0 6px', borderRadius: 6, background: 'rgba(251,180,21,0.16)', border: '1px solid var(--gold-bright)', fontSize: 11.5 },
   slotHead: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 },
   slotName: { fontWeight: 700, fontSize: 13, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   slotH: { fontSize: 11, fontWeight: 700 },
