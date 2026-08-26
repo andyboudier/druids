@@ -732,6 +732,17 @@ export default function DruidsApp() {
   // the override applies to that one session and lapses by itself once the day
   // rolls round — a cutoff can never be left permanently disabled by accident.
   const [manualOpen, setManualOpen] = useState(() => Object.fromEntries(DAY_KEYS.map(k => [k, ''])));
+  // Per-day sign-up cut-off, captain-editable. Shape { d, t }: close `d` days
+  // before the session at time `t` (HH:MM), or at throw-in when `t` is ''.
+  // The defaults live in DAY_CONFIG and reproduce the behaviour these days have
+  // always had, so nothing changes until a captain actually edits one.
+  const [cutoffs, setCutoffs] = useState(() => Object.fromEntries(DAY_KEYS.map(k => [k, null])));
+  const cutoffFor = (dayKey = activeDay) => {
+    const saved = cutoffs[dayKey];
+    if (saved && typeof saved.d === 'number') return saved;
+    const cfg = DAY_CONFIG[dayKey] || {};
+    return { d: cfg.cutoffDaysBefore != null ? cfg.cutoffDaysBefore : 1, t: cfg.cutoffAt || '' };
+  };
   // The draw stays hidden from members until the captain publishes it, so they
   // only see it when it's ready. Persisted per day and synced.
   const [drawPublished, setDrawPublished] = useState(() => Object.fromEntries(DAY_KEYS.map(k => [k, false])));
@@ -777,6 +788,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
   // Throw-in time editor (captain mode)
   const [throwInEditing, setThrowInEditing] = useState(false);
+  const [cutoffEditing, setCutoffEditing] = useState(false);
+  const [cutoffInput, setCutoffInput] = useState('');
+  const [cutoffDays, setCutoffDays] = useState('1');
   const [throwInInput, setThrowInInput] = useState('');
 
   const activeDayConfig = DAY_CONFIG[activeDay];
@@ -1016,9 +1030,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // Captain PIN — visible in source, this is a soft gate not real security
   const CAPTAIN_PIN = '2004';
 
-  // Booking cutoff: every chukka day closes 24 hours before its throw-in.
-  // Captain mode always bypasses it.
-  const CUTOFF_HOURS = 24;
+  // Booking cutoffs are no longer hard-coded: each day closes `d` days before
+  // the session at time `t`, taken from the captain's saved value or the day's
+  // default in DAY_CONFIG (see cutoffTime / cutoffFor below). The default is
+  // 1 day before at throw-in — the 24-hour rule these days have always used.
+  // Captain mode always bypasses the cutoff.
   const CONTACT_EMAIL = 'abi@druidspolo.co.uk';
 
   const isBookingClosed = (dayKey = activeDay) => {
@@ -1026,9 +1042,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     // Captain has explicitly opened THIS session past its cutoff. Compared
     // against the session date so it cannot linger into a later week.
     if (manualOpen[dayKey] && manualOpen[dayKey] === currentDayISO(dayKey)) return false;
-    // Every chukka day closes 24 hours before throw-in.
-    const cutoff = targetDayThrowIn(dayKey).getTime() - CUTOFF_HOURS * 60 * 60 * 1000;
-    return Date.now() >= cutoff;
+    return Date.now() >= cutoffTime(dayKey);
   };
 
   // Human-readable explanation shown in the booking-closed banner and handleAdd error.
@@ -1036,7 +1050,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     if (manualClosed[dayKey]) {
       return 'Sign-ups for this session are closed — it\u2019s full. Please contact the captain if you\u2019d still like to play.';
     }
-    return `Sign-ups close 24 hours before throw-in (${DAY_CONFIG[dayKey].eveningPrev} ${fmtTime(throwInMins[dayKey])}).`;
+    return `Sign-ups for this ${DAY_CONFIG[dayKey].fullLabel} closed ${cutoffLabel(dayKey)}.`;
   };
 
   // Target throw-in datetime for a given day. Rolls forward to next week
@@ -1059,10 +1073,26 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     return target;
   };
 
-  // Sign-up cutoff datetime (ms) for a day — mirrors isBookingClosed():
-  //   Wed closes Tuesday 12:00; Sat/Sun/Thu close 24h before throw-in.
-  const cutoffTime = (dayKey) => {
-    return targetDayThrowIn(dayKey).getTime() - CUTOFF_HOURS * 60 * 60 * 1000;
+  // Sign-up cutoff datetime (ms) for a day, from the captain's setting or the
+  // day's default: `d` days before the session, at `t` (or at throw-in when the
+  // time is blank). This is the ONE place the cutoff is computed — the members'
+  // banner, isBookingClosed and the reminder notification all read it, so they
+  // cannot drift apart from each other or from what the captain set.
+  const cutoffTime = (dayKey = activeDay) => {
+    const { d, t } = cutoffFor(dayKey);
+    const session = targetDayThrowIn(dayKey);
+    const at = new Date(session);
+    at.setDate(session.getDate() - (d || 0));
+    const mins = t ? parseTime(t) : throwInMins[dayKey];
+    if (mins != null) at.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
+    return at.getTime();
+  };
+  // "Tuesday at 12:00" — how the cut-off reads to a member, derived rather than
+  // hard-coded so it always matches whatever the captain has set.
+  const cutoffLabel = (dayKey = activeDay) => {
+    const at = new Date(cutoffTime(dayKey));
+    const weekday = at.toLocaleDateString('en-GB', { weekday: 'long' });
+    return `${weekday} at ${fmtTime(at.getHours() * 60 + at.getMinutes())}`;
   };
 
   // Schedule iOS reminders for upcoming sessions that have sign-ups. Re-run on
@@ -1104,7 +1134,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         }
 
         // Sign-ups closing reminder — 3 hours before the cutoff.
-        const closeText = `${cfg.eveningPrev} at ${timeStr}`;
+        const closeText = cutoffLabel(dayKey);
         const warnAt = cutoffTime(dayKey) - 180 * 60 * 1000;
         if (warnAt > now + 60 * 1000) {
           toSchedule.push({
@@ -1252,6 +1282,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       const nextGrounds = Object.fromEntries(DAY_KEYS.map(k => [k, '']));
       const nextClosed = Object.fromEntries(DAY_KEYS.map(k => [k, false]));
       const nextOpen = Object.fromEntries(DAY_KEYS.map(k => [k, '']));
+      const nextCutoffs = Object.fromEntries(DAY_KEYS.map(k => [k, null]));
       const nextPublished = Object.fromEntries(DAY_KEYS.map(k => [k, false]));
       // Issue every per-day read at once rather than awaiting them one after
       // another. Nothing here depends on anything else here, so serialising them
@@ -1264,10 +1295,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         Promise.all([
           read('roster', dk), read('schedule', dk), read('throwin', dk),
           read('ground', dk), read('booking-closed', dk), read('draw-published', dk),
-          read('booking-open', dk),
-        ]).then(([r, s, t, g, bc, dp, bo]) => ({ dk, r, s, t, g, bc, dp, bo }))
+          read('booking-open', dk), read('cutoff', dk),
+        ]).then(([r, s, t, g, bc, dp, bo, cu]) => ({ dk, r, s, t, g, bc, dp, bo, cu }))
       ));
-      for (const { dk, r, s, t, g, bc, dp, bo } of dayReads) {
+      for (const { dk, r, s, t, g, bc, dp, bo, cu } of dayReads) {
         try {
           if (r?.value) nextRosters[dk] = JSON.parse(r.value);
         } catch (e) {}
@@ -1296,6 +1327,12 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         try {
           if (bo?.value) nextOpen[dk] = bo.value;
         } catch (e) {}
+        try {
+          if (cu?.value) {
+            const parsed = JSON.parse(cu.value);
+            if (parsed && typeof parsed.d === 'number') nextCutoffs[dk] = { d: parsed.d, t: parsed.t || '' };
+          }
+        } catch (e) {}
       }
       setRosters(nextRosters);
       setSchedules(nextSchedules);
@@ -1303,6 +1340,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       setGrounds(nextGrounds);
       setManualClosed(nextClosed);
       setManualOpen(nextOpen);
+      setCutoffs(nextCutoffs);
       setDrawPublished(nextPublished);
       // The rosters ARE the app's front page, and they are now all in hand.
       // Drop the full-screen crest here rather than at the end of loadAll, so
@@ -1443,6 +1481,23 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
   // Move a day's throw-in. Any existing draw keeps its teams and counts; only
   // the printed times shift, recomputed off the new start.
+  // Persist a captain-set cut-off. Saved per day so each session can close on
+  // its own schedule; the notification copy and the members' banner both read
+  // from the same value, so they can never drift apart from it.
+  const applyCutoff = async (daysBefore, hhmm, dayKey = activeDay) => {
+    const d = Math.max(0, Math.min(6, parseInt(daysBefore, 10) || 0));
+    const t = hhmm && parseTime(hhmm) !== null ? hhmm : '';
+    const next = { d, t };
+    setCutoffs(prev => ({ ...prev, [dayKey]: next }));
+    try { await window.storage.set(storageKey('cutoff', dayKey), JSON.stringify(next), true); } catch (e) {}
+    return true;
+  };
+  // Drop back to the day's built-in cut-off.
+  const resetCutoff = async (dayKey = activeDay) => {
+    setCutoffs(prev => ({ ...prev, [dayKey]: null }));
+    try { await window.storage.delete(storageKey('cutoff', dayKey), true); } catch (e) {}
+  };
+
   const applyThrowIn = async (hhmm, dayKey = activeDay) => {
     const parsed = parseTime(hhmm);
     if (parsed === null) return false;
@@ -4886,6 +4941,61 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     <button
                       type="button"
                       onClick={() => { setThrowInEditing(false); setThrowInInput(''); }}
+                      style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline' }}
+                    >cancel</button>
+                  </div>
+                ) : null}
+                {/* Sign-up cut-off — captain-editable, and the single source for
+                    the members' banner and the "sign-ups closing" reminder. */}
+                <div style={{ fontSize: '10px', letterSpacing: '1px', textTransform: 'uppercase', color: 'var(--muted)', marginTop: '6px' }}>
+                  Sign-ups close {cutoffLabel(activeDay)}
+                  {captainMode && !cutoffEditing && (
+                    <button
+                      type="button"
+                      onClick={() => { const c = cutoffFor(activeDay); setCutoffDays(String(c.d)); setCutoffInput(c.t || fmtTime(throwInMin)); setCutoffEditing(true); }}
+                      style={{
+                        background: 'none', border: 'none', marginLeft: '8px',
+                        fontSize: '10px', color: 'var(--burgundy)', cursor: 'pointer',
+                        textDecoration: 'underline', textUnderlineOffset: '3px',
+                        fontFamily: 'inherit', letterSpacing: '1px', textTransform: 'uppercase',
+                      }}
+                    >edit cut-off</button>
+                  )}
+                </div>
+                {captainMode && cutoffEditing ? (
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', margin: '8px 0' }}>
+                    <select
+                      value={cutoffDays}
+                      onChange={(e) => setCutoffDays(e.target.value)}
+                      style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: '4px', fontSize: '14px', fontFamily: 'inherit', background: '#fff', color: 'var(--ink)' }}
+                    >
+                      <option value="0">Same day</option>
+                      <option value="1">1 day before</option>
+                      <option value="2">2 days before</option>
+                      <option value="3">3 days before</option>
+                      <option value="4">4 days before</option>
+                      <option value="5">5 days before</option>
+                      <option value="6">6 days before</option>
+                    </select>
+                    <input
+                      type="time"
+                      value={cutoffInput}
+                      onChange={(e) => setCutoffInput(e.target.value)}
+                      style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: '4px', fontSize: '15px', fontFamily: 'inherit' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => { await applyCutoff(cutoffDays, cutoffInput); setCutoffEditing(false); }}
+                      style={{ background: 'var(--burgundy)', color: 'var(--cream)', border: 'none', borderRadius: '4px', padding: '8px 14px', fontSize: '11px', letterSpacing: '1.5px', textTransform: 'uppercase', cursor: 'pointer' }}
+                    >Save</button>
+                    <button
+                      type="button"
+                      onClick={async () => { await resetCutoff(); setCutoffEditing(false); }}
+                      style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline' }}
+                    >default</button>
+                    <button
+                      type="button"
+                      onClick={() => setCutoffEditing(false)}
                       style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline' }}
                     >cancel</button>
                   </div>
