@@ -303,8 +303,11 @@ const isInterestClosed = (fx) => {
 };
 
 // A fixture's programme reaches members only once a captain publishes it, so the
-// draw can be built in peace. Captains always see it, published or not.
-const isProgrammePublished = (det) => !!(det && det.published);
+// draw can be built in peace — gated on fixtures[i].detailsPublished, which is
+// what the captain's "Publish draw to players" button toggles. There used to be
+// a second gate here on a `published` field of the details record, but nothing
+// in the app has ever written that field: fixtures carrying it are legacy data,
+// and every fixture built since could pass the real gate and still be hidden.
 const isTournamentActive = (fx) => {
   const range = parseFixtureDateRange(fx);
   if (!range) return false;
@@ -6250,12 +6253,16 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                 const fmtHcp = (h) => h === null || h === undefined ? '' : (h > 0 ? ' +' + h : h < 0 ? ' ' + h : ' 0');
                                 return (
                                   <div style={{ marginBottom: '14px' }}>
-                                    {!captainMode && det && (det.days || []).length > 0 && !isProgrammePublished(det) && (
+                                    {/* Published, but the captain hasn't built any days yet — say so
+                                        rather than showing members an empty fixture. Whether the draw is
+                                        visible at all was already decided above, by the one flag the
+                                        captain's publish button actually sets. */}
+                                    {!captainMode && det && (det.days || []).length === 0 && (
                                       <div style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: 1.5, padding: '10px 12px', background: 'var(--cream-warm)', borderRadius: '6px', marginBottom: '10px' }}>
-                                        The draw for this fixture is still being put together. It appears here as soon as the captain publishes it.
+                                        The draw for this fixture is still being put together. It appears here as soon as it’s ready.
                                       </div>
                                     )}
-                                    {det && det.days && (captainMode || isProgrammePublished(det)) && det.days.map((day, di) => (
+                                    {det && det.days && det.days.map((day, di) => (
                                       <div key={di} style={{ marginBottom: '18px' }}>
                                         <div style={{ textAlign: 'center', marginBottom: '10px' }}>
                                           <div style={{ fontWeight: 700, fontSize: '13px', letterSpacing: '1.5px', textTransform: 'uppercase', color: 'var(--ink)', marginBottom: '2px' }}>{day.dateLabel}</div>
