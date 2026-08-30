@@ -4,7 +4,7 @@ import {
   isFullscreen, canFullscreen, canWakeLock,
 } from './stageMode';
 import { DEFAULT_COMMITTEE, teamHandicap } from './pdfShared';
-import { headStartFor, headStartGoals, matchChukkas, isArenaGround } from './handicap';
+import { headStartFor, headStartGoals, matchChukkas, isArenaGround, normaliseHandicapRules } from './handicap';
 import { startLiveScore, updateLiveScore, endLiveScore } from './liveScoreActivity';
 
 // The PDF generator is only reachable behind an explicit print action, so it is
@@ -1429,7 +1429,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       try {
         const fd = await window.storage.get('fixture-details', true);
         let parsed = (fd && fd.value) ? JSON.parse(fd.value) : {};
-        setFixtureDetails(parsed);
+        setFixtureDetails(normaliseHandicapRules(parsed));
         const tdb = await window.storage.get('teams-db', true);
         if (tdb?.value) setTeamsDb(JSON.parse(tdb.value));
         const ts = await window.storage.get('team-signups', true);
@@ -2890,6 +2890,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   };
 
   const saveFixtureDetails = async (next) => {
+    next = normaliseHandicapRules(next);
     setFixtureDetails(next);
     try { await window.storage.set('fixture-details', JSON.stringify(next), true); }
     catch (e) { setFError('Saved locally only — check your connection.'); }
@@ -6584,7 +6585,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                         setDraft({ ...draft, days: newDays });
                                       };
                                       return (
-                                        <div ref={detailsEditorRef} style={{ background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '6px', padding: '14px', marginBottom: '14px', scrollMarginTop: '12px' }}>
+                                        <div ref={detailsEditorRef} style={{ background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '6px', padding: '12px 7px', marginBottom: '14px', scrollMarginTop: '12px',
+                                          // The editor is the widest thing in a fixture card, and it sits
+                                          // inside the card's own gutter. Pull back into it while editing so
+                                          // the fields get the width instead.
+                                          marginLeft: '-12px', marginRight: '-12px' }}>
                                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                                             <div className="label-eyebrow" style={{ fontSize: '10px' }}>Match details</div>
                                             <button onClick={() => setEditingDetailsId(null)} style={{ background: 'none', border: 'none', fontSize: '20px', color: 'var(--muted)', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}>×</button>
@@ -6595,7 +6600,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                             </button>
                                           )}
                                           {(draft.days || []).map((day, di) => (
-                                            <div key={di} style={{ background: 'white', border: '1px solid var(--line)', borderRadius: '4px', padding: '10px', marginBottom: '10px' }}>
+                                            <div key={di} style={{ background: 'white', border: '1px solid var(--line)', borderRadius: '4px', padding: '10px 6px', marginBottom: '10px' }}>
                                               <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', alignItems: 'center' }}>
                                                 <input className="input-field" placeholder="Day label e.g. Saturday 30th May" value={day.dateLabel || ''} onChange={e => updDay(di, d => ({...d, dateLabel: e.target.value}))} style={{ flex: 2, padding: '7px 10px', fontSize: '12px' }} />
                                                 <select className="input-field select-field" value={day.ground || ''} onChange={e => updDay(di, d => ({...d, ground: e.target.value}))} style={{ flex: 1, padding: '7px 10px', fontSize: '12px' }}>
@@ -6629,7 +6634,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                 </span>
                                               </label>
                                               {(day.matches || []).map((match, mi) => (
-                                                <div key={mi} style={{ background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '4px', padding: '8px', marginBottom: '6px' }}>
+                                                <div key={mi} style={{ background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '4px', padding: '8px 6px', marginBottom: '6px' }}>
                                                   <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '10px', color: 'var(--muted)', marginBottom: '6px', cursor: 'pointer', userSelect: 'none' }}>
                                                     <input type="checkbox" checked={!!match.pageBreakBefore} onChange={e => updMatch(di, mi, m => ({...m, pageBreakBefore: e.target.checked}))} style={{ width: '14px', height: '14px', accentColor: 'var(--burgundy)' }} />
                                                     Start this match on a new page in the PDF
@@ -6665,13 +6670,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                     const earlier = (draft.days || [])
                                                       .flatMap((d2, dj) => dj < di ? (d2.matches || []).map(m2 => ({ m2, label: `${d2.dateLabel || 'Day ' + (dj + 1)} · ${m2.label || ((m2.teamA?.name || 'A') + ' v ' + (m2.teamB?.name || 'B'))}` })) : []);
                                                     return (
-                                                      <div style={{ background: 'var(--cream-warm)', border: '1px solid var(--line)', borderRadius: '4px', padding: '7px 9px', marginBottom: '5px' }}>
-                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--ink)', cursor: 'pointer', userSelect: 'none' }}>
-                                                          <input type="checkbox" checked={!!match.arenaHandicap} onChange={e => updMatch(di, mi, m => ({...m, arenaHandicap: e.target.checked}))} style={{ width: '14px', height: '14px', accentColor: 'var(--burgundy)' }} />
-                                                          Arena handicap — HPA Arena Rule 17(b), difference &times; 2
-                                                        </label>
+                                                      <div style={{ background: 'var(--cream-warm)', borderRadius: '4px', padding: '7px 8px', marginBottom: '5px' }}>
                                                         {earlier.length > 0 && (
-                                                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--ink)', cursor: 'pointer', userSelect: 'none', marginTop: '5px' }}>
+                                                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--ink)', cursor: 'pointer', userSelect: 'none' }}>
                                                             <input type="checkbox" checked={!!match.continuation} onChange={e => updMatch(di, mi, m => ({...m, continuation: e.target.checked, continuedFrom: e.target.checked ? m.continuedFrom : ''}))} style={{ width: '14px', height: '14px', accentColor: 'var(--burgundy)' }} />
                                                             Continuation — the score carries on from an earlier day
                                                           </label>
@@ -6703,7 +6704,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                           {match.continuation
                                                             ? 'No goals on — they were given on the first day and carry in the score above.'
                                                             : hs.goals > 0
-                                                              ? `Goals on: ${fmtHalf(hs.goals)} to ${hs.team === 'A' ? (match.teamA?.name || 'Team A') : (match.teamB?.name || 'Team B')}${match.arenaHandicap ? ' (arena, \u00d72)' : ` (grass, \u00d7${matchChukkas(match)}\u00f76)`}`
+                                                              ? `Goals on: ${fmtHalf(hs.goals)} to ${hs.team === 'A' ? (match.teamA?.name || 'Team A') : (match.teamB?.name || 'Team B')}${match.arenaHandicap ? ' \u2014 arena rule, \u00d72' : ` \u2014 grass rule, \u00d7${matchChukkas(match)}\u00f76`}`
                                                               : 'Goals on: none — the teams are level.'}
                                                         </div>
                                                       </div>
