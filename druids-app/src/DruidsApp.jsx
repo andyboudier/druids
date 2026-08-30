@@ -3639,9 +3639,21 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           position: sticky;
           top: 0;
           z-index: 10;
+          /* With more tabs than fit a phone, the strip scrolls itself rather
+             than pushing the whole page sideways — which it used to do, leaving
+             the last tab unreachable without swiping the entire layout. The
+             scrollbar is hidden: this reads as a tab row, not a scroller. */
+          overflow-x: auto;
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+          -webkit-overflow-scrolling: touch;
         }
+        .tabs::-webkit-scrollbar { display: none; }
         .tab-btn {
-          flex: 1;
+          /* Grow to share the width when there is room, never shrink below the
+             label — shrinking is what forced the overflow. */
+          flex: 1 0 auto;
+          white-space: nowrap;
           background: transparent;
           border: none;
           padding: 14px 8px;
