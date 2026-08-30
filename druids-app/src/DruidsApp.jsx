@@ -1014,10 +1014,19 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const [liveDayId, setLiveDayId] = useState(() => (restoredView && restoredView.liveDayId) || null);
   const [liveMatchId, setLiveMatchId] = useState(() => (restoredView && restoredView.liveMatchId) || null);
   const [liveDate, setLiveDate] = useState(() => (restoredView && restoredView.liveDate) || null);
-  // Live scoreboard: whether the (collapsed-by-default) player lists are expanded.
-  const [livePlayersOpen, setLivePlayersOpen] = useState(false);
+  // Live scoreboard: whether the player lists are expanded. Open by default —
+  // the line-ups are the thing spectators look for, and a tap to reveal them is
+  // a tap nobody wants at pitchside. Re-opened on every entry to Live Game
+  // below, so collapsing it is a decision for the moment, not for the session.
+  const [livePlayersOpen, setLivePlayersOpen] = useState(true);
   // Live scoreboard: whether the (collapsed-by-default) shirt-colour picker is open.
   const [liveColoursOpen, setLiveColoursOpen] = useState(false);
+
+  // Arriving at Live Game always shows the line-ups, even if they were collapsed
+  // on a previous visit in this session.
+  useEffect(() => {
+    if (activeTab === 'live') setLivePlayersOpen(true);
+  }, [activeTab]);
 
   // Persist the current tab + live-score selection so a refresh returns here
   // instead of the home screen. Stored with a timestamp (see readViewState).
@@ -7295,8 +7304,13 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                             {captainMode && <button onClick={() => setLiveColoursOpen(o => !o)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px', cursor: 'pointer', textTransform: 'uppercase' }}>{liveColoursOpen ? '▴ Shirt colours' : '▾ Shirt colours'}</button>}
                           </div>
 
+                          {/* Both line-ups side by side wherever the two columns fit, so the
+                              board stays on one screen in full screen; on a phone they wrap
+                              and stack. The app column is 540px wide, leaving 480px inside
+                              this panel — at the old 240px minimum plus a 20px gap the pair
+                              needed 500px and always wrapped, even on a desktop. */}
                           {livePlayersOpen && (
-                            <div style={{ marginTop: '8px', background: '#fff', border: '1px solid var(--line)', borderRadius: '8px', padding: '14px', display: 'flex', flexWrap: 'wrap', gap: '20px' }}>
+                            <div style={{ marginTop: '8px', background: '#fff', border: '1px solid var(--line)', borderRadius: '8px', padding: '14px', display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
                               {['teamA', 'teamB'].map(tk => {
                                 const team = curMatch[tk] || {};
                                 const nm = tk === 'teamA' ? nameA : nameB;
@@ -7320,7 +7334,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                     return String(va).localeCompare(String(vb), undefined, { numeric: true }) || (a.origIdx - b.origIdx);
                                   });
                                 return (
-                                  <div key={tk} style={{ flex: 1, minWidth: '240px' }}>
+                                  <div key={tk} style={{ flex: 1, minWidth: '200px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '8px' }}>
                                       <span style={{ width: '14px', height: '14px', borderRadius: '4px', background: col.hex, border: '1px solid rgba(0,0,0,0.2)' }} />
                                       <span style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--burgundy)' }}>{nm}</span>
