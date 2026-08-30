@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
+import {
+  enterStageMode, exitStageMode, reacquireWakeLock,
+  isFullscreen, canFullscreen, canWakeLock,
+} from './stageMode';
 import { DEFAULT_COMMITTEE, teamHandicap } from './pdfShared';
+import { headStartFor, headStartGoals, matchChukkas, isArenaGround } from './handicap';
 import { startLiveScore, updateLiveScore, endLiveScore } from './liveScoreActivity';
 
 // The PDF generator is only reachable behind an explicit print action, so it is
@@ -790,6 +795,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const [dueMethod, setDueMethod] = useState({});      // per-due payment-method picker in Checkout
 
   // Throw-in time editor (captain mode)
+  // The match-details editor opens well below the fold on a long fixture, so
+  // tapping "Edit match details" used to leave you looking at the same screen
+  // with the editor somewhere off the bottom. Scrolled into view once it mounts.
+  const detailsEditorRef = useRef(null);
   const [throwInEditing, setThrowInEditing] = useState(false);
   const [cutoffEditing, setCutoffEditing] = useState(false);
   const [cutoffInput, setCutoffInput] = useState('');
@@ -903,6 +912,68 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const [fixtureEditor, setFixtureEditor] = useState(null); // null | { id?, month, date, name, level }
   const [trophyDraft, setTrophyDraft] = useState({}); // fxId -> in-progress "trophy looked after by" text, persisted on blur
   const [editingDetailsId, setEditingDetailsId] = useState(null);
+  // Stage mode — Live Game filling the screen with the phone kept awake, for a
+  // handset propped on the boards through a chukka.
+  const [stageMode, setStageMode] = useState(false);
+  const [stageNote, setStageNote] = useState('');
+
+  const toggleStageMode = async () => {
+    if (stageMode) {
+      await exitStageMode();
+      setStageMode(false);
+      setStageNote('');
+      return;
+    }
+    const { fullscreen, awake } = await enterStageMode();
+    setStageMode(true);
+    // Say which half took effect rather than letting the switch look broken:
+    // iPhone Safari has no Fullscreen API, and a wake lock can be refused.
+    setStageNote(
+      fullscreen && awake ? ''
+        : awake ? 'Screen kept awake. This browser can\u2019t go full screen.'
+        : fullscreen ? 'Full screen. This browser won\u2019t keep the screen awake.'
+        : 'This browser supports neither full screen nor keeping the screen awake.'
+    );
+  };
+
+  // Leaving full screen by any other route — Esc, the system gesture, the
+  // Android back button — must switch the toggle off too, or it lies.
+  useEffect(() => {
+    if (!stageMode) return undefined;
+    const onChange = () => { if (canFullscreen() && !isFullscreen()) { exitStageMode(); setStageMode(false); setStageNote(''); } };
+    document.addEventListener('fullscreenchange', onChange);
+    document.addEventListener('webkitfullscreenchange', onChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange);
+      document.removeEventListener('webkitfullscreenchange', onChange);
+    };
+  }, [stageMode]);
+
+  // The browser drops the wake lock whenever the page is hidden, so take it
+  // again on the way back — otherwise stage mode quietly stops working after
+  // the first time you check a message.
+  useEffect(() => {
+    if (!stageMode) return undefined;
+    const onVisible = () => { if (document.visibilityState === 'visible') reacquireWakeLock(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [stageMode]);
+
+  // Never leave the screen pinned awake after Live Game is left or the app closes.
+  useEffect(() => {
+    if (stageMode && activeTab !== 'live') { exitStageMode(); setStageMode(false); setStageNote(''); }
+  }, [activeTab, stageMode]);
+  useEffect(() => () => { exitStageMode(); }, []);
+
+  useEffect(() => {
+    if (!editingDetailsId) return undefined;
+    // One frame, so the editor is laid out before we measure where it is.
+    const t = requestAnimationFrame(() => {
+      detailsEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => cancelAnimationFrame(t);
+  }, [editingDetailsId]);
+
   const isDesktop = useIsDesktop();
   const [boardFixtureId, setBoardFixtureId] = useState(null); // fixture open on the desktop board
   const [chukkaBoardOpen, setChukkaBoardOpen] = useState(false); // desktop chukka board
@@ -3095,20 +3166,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // Any fraction of a goal is counted as half a goal.
   //   e.g. 2-goal diff over 4 chukkas = (2*4)/6 = 1.5; 1-goal diff = (1*4)/6 = 0.5;
   //        3-goal diff = (3*4)/6 = 2; 2-goal diff over 2 chukkas = (2*2)/6 = 0.5.
-  const matchChukkas = (match) => {
-    const n = Number(match && match.chukkas);
-    return Number.isFinite(n) && n > 0 ? n : 4; // matches default to 4 chukkas
-  };
-  const liveHeadStart = (match, teamKey) => {
-    const hA = teamHandicap(match && match.teamA) || 0;
-    const hB = teamHandicap(match && match.teamB) || 0;
-    if (hA === hB) return 0;
-    const units = Math.abs(hA - hB) * matchChukkas(match); // goal diff * chukkas
-    const whole = Math.floor(units / 6);
-    const goals = whole + (units % 6 > 0 ? 0.5 : 0); // divide by 6; any fraction → half a goal
-    const lower = hA < hB ? 'A' : 'B';
-    return teamKey === lower ? goals : 0;
-  };
+  const liveHeadStart = (match, teamKey) => headStartFor(match, teamKey, teamHandicap);
   const fmtHalf = (n) => {
     const whole = Math.floor(n);
     const half = (n - whole) >= 0.5;
@@ -3533,6 +3591,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           line-height: 1.4;
         }
         .polo-app * { box-sizing: border-box; }
+        /* Stage mode: the score gets the whole screen. The masthead and the
+           tab bar are hidden rather than unmounted, so leaving stage mode
+           returns you exactly where you were. */
+        .polo-app.stage-on .header-bg,
+        .polo-app.stage-on .tabs { display: none; }
         .display { font-family: 'Fraunces', Georgia, serif; font-weight: 500; }
         .display-italic { font-family: 'Fraunces', Georgia, serif; font-style: italic; font-weight: 400; }
         .label-eyebrow {
@@ -4682,7 +4745,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         .reveal { animation: fadeInScale 0.4s ease-out; }
       `}</style>
 
-      <div className="polo-app">
+      <div className={`polo-app${stageMode ? ' stage-on' : ''}`}>
         {/* Desktop fixture board. Renders only above the breakpoint and only in
             captain mode; every edit goes through the same updaters the phone
             editor uses, so the two views cannot diverge. */}
@@ -6511,6 +6574,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                               teamA: mkTeam(enteredTeams[i], d),
                                               teamB: mkTeam(enteredTeams[i + 1], d),
                                               chukkas: 4, umpires: '', commentator: '', goalJudges: '', timekeeper: '', notes: '',
+                                              arenaHandicap: isArenaGround(d.ground),
                                             });
                                           }
                                           return { id: d.key, dateLabel: d.label, ground: '', matches, prizegiving: false };
@@ -6520,7 +6584,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                         setDraft({ ...draft, days: newDays });
                                       };
                                       return (
-                                        <div style={{ background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '6px', padding: '14px', marginBottom: '14px' }}>
+                                        <div ref={detailsEditorRef} style={{ background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '6px', padding: '14px', marginBottom: '14px', scrollMarginTop: '12px' }}>
                                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                                             <div className="label-eyebrow" style={{ fontSize: '10px' }}>Match details</div>
                                             <button onClick={() => setEditingDetailsId(null)} style={{ background: 'none', border: 'none', fontSize: '20px', color: 'var(--muted)', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}>×</button>
@@ -6578,15 +6642,73 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                     <input className="input-field" placeholder="Time" value={match.time || ''} onChange={e => updMatch(di, mi, m => ({...m, time: e.target.value}))} style={{ width: '52px', padding: '5px 4px', fontSize: '11px', textAlign: 'center' }} />
                                                     <input className="input-field" type="number" min="1" placeholder="Ch" title="Chukkas in this match (used for the handicap goal start)" value={match.chukkas ?? ''} onChange={e => updMatch(di, mi, m => ({...m, chukkas: e.target.value === '' ? null : Math.max(1, parseInt(e.target.value, 10) || 1)}))} style={{ width: '34px', padding: '5px 2px', fontSize: '11px', textAlign: 'center' }} />
                                                     <input className="input-field" placeholder="Div" title="Division, e.g. I, II, III — groups this match's teams on the 'Team sheets by division' PDF. Order in the list doesn't matter." value={match.division || ''} onChange={e => updMatch(di, mi, m => ({...m, division: e.target.value}))} style={{ width: '38px', padding: '5px 2px', fontSize: '11px', textAlign: 'center' }} />
-                                                    <input className="input-field" placeholder="Label e.g. Final" value={match.label || ''} onChange={e => updMatch(di, mi, m => ({...m, label: e.target.value}))} style={{ flex: 1, minWidth: 0, padding: '6px 8px', fontSize: '15px', fontWeight: 600 }} />
-                                                    <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, gap: '1px' }}>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, gap: '1px', marginLeft: 'auto' }}>
                                                       <button onClick={() => moveMatch(di, mi, -1)} disabled={mi === 0} title="Move up" style={{ background: 'none', border: 'none', color: mi === 0 ? 'var(--line)' : 'var(--burgundy)', fontSize: '10px', cursor: mi === 0 ? 'default' : 'pointer', lineHeight: 1, padding: '1px 3px' }}>▲</button>
                                                       <button onClick={() => moveMatch(di, mi, 1)} disabled={mi === (day.matches || []).length - 1} title="Move down" style={{ background: 'none', border: 'none', color: mi === (day.matches || []).length - 1 ? 'var(--line)' : 'var(--burgundy)', fontSize: '10px', cursor: mi === (day.matches || []).length - 1 ? 'default' : 'pointer', lineHeight: 1, padding: '1px 3px' }}>▼</button>
                                                     </div>
                                                     <button onClick={() => { const matches = day.matches.filter((_,i) => i!==mi); updDay(di, d => ({...d, matches})); }} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: '16px', cursor: 'pointer', flexShrink: 0, lineHeight: 1, padding: '0 2px' }}>×</button>
                                                   </div>
-                                                  <input className="input-field" placeholder="Umpires" value={match.umpires || ''} onChange={e => updMatch(di, mi, m => ({...m, umpires: e.target.value}))} style={{ width: '100%', padding: '5px 7px', fontSize: '12px', marginBottom: '5px' }} />
-                                                  <input className="input-field" placeholder="Commentator" value={match.commentator || ''} onChange={e => updMatch(di, mi, m => ({...m, commentator: e.target.value}))} style={{ width: '100%', padding: '5px 7px', fontSize: '12px', marginBottom: '5px' }} />
+                                                  {/* The match title on its own line, under the time/chukkas/division
+                                                      row, so it reads as the heading it is rather than as one more
+                                                      small box in a row of small boxes. */}
+                                                  <input className="input-field" placeholder="Match title e.g. Final" value={match.label || ''} onChange={e => updMatch(di, mi, m => ({...m, label: e.target.value}))} style={{ width: '100%', padding: '7px 9px', fontSize: '15px', fontWeight: 600, marginBottom: '5px' }} />
+                                                  <div style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
+                                                    <input className="input-field" placeholder="Umpires" value={match.umpires || ''} onChange={e => updMatch(di, mi, m => ({...m, umpires: e.target.value}))} style={{ flex: 1, minWidth: 0, padding: '5px 7px', fontSize: '12px' }} />
+                                                    <input className="input-field" placeholder="Commentator" value={match.commentator || ''} onChange={e => updMatch(di, mi, m => ({...m, commentator: e.target.value}))} style={{ flex: 1, minWidth: 0, padding: '5px 7px', fontSize: '12px' }} />
+                                                  </div>
+                                                  {/* Which handicap rule this match runs under, and — for a round
+                                                      robin carried across days — whether its score continues from an
+                                                      earlier one. Both are stored on the match, so nothing already
+                                                      recorded is restated by a rule change. */}
+                                                  {(() => {
+                                                    const hs = headStartGoals(match, teamHandicap);
+                                                    const earlier = (draft.days || [])
+                                                      .flatMap((d2, dj) => dj < di ? (d2.matches || []).map(m2 => ({ m2, label: `${d2.dateLabel || 'Day ' + (dj + 1)} · ${m2.label || ((m2.teamA?.name || 'A') + ' v ' + (m2.teamB?.name || 'B'))}` })) : []);
+                                                    return (
+                                                      <div style={{ background: 'var(--cream-warm)', border: '1px solid var(--line)', borderRadius: '4px', padding: '7px 9px', marginBottom: '5px' }}>
+                                                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--ink)', cursor: 'pointer', userSelect: 'none' }}>
+                                                          <input type="checkbox" checked={!!match.arenaHandicap} onChange={e => updMatch(di, mi, m => ({...m, arenaHandicap: e.target.checked}))} style={{ width: '14px', height: '14px', accentColor: 'var(--burgundy)' }} />
+                                                          Arena handicap — HPA Arena Rule 17(b), difference &times; 2
+                                                        </label>
+                                                        {earlier.length > 0 && (
+                                                          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--ink)', cursor: 'pointer', userSelect: 'none', marginTop: '5px' }}>
+                                                            <input type="checkbox" checked={!!match.continuation} onChange={e => updMatch(di, mi, m => ({...m, continuation: e.target.checked, continuedFrom: e.target.checked ? m.continuedFrom : ''}))} style={{ width: '14px', height: '14px', accentColor: 'var(--burgundy)' }} />
+                                                            Continuation — the score carries on from an earlier day
+                                                          </label>
+                                                        )}
+                                                        {match.continuation && earlier.length > 0 && (
+                                                          <div style={{ display: 'flex', gap: '6px', marginTop: '5px', alignItems: 'center' }}>
+                                                            <select
+                                                              className="input-field select-field"
+                                                              value={match.continuedFrom || ''}
+                                                              onChange={e => {
+                                                                const src = earlier.find(x => x.m2.id === e.target.value);
+                                                                // Carry the running score across with the link, so the
+                                                                // captain doesn't retype it — and so it is obvious the
+                                                                // second day starts where the first left off.
+                                                                updMatch(di, mi, m => ({
+                                                                  ...m,
+                                                                  continuedFrom: e.target.value,
+                                                                  ...(src ? { scoreA: src.m2.scoreA ?? null, scoreB: src.m2.scoreB ?? null } : {}),
+                                                                }));
+                                                              }}
+                                                              style={{ flex: 1, minWidth: 0, padding: '5px 7px', fontSize: '11px' }}
+                                                            >
+                                                              <option value="">Carry the score on from…</option>
+                                                              {earlier.map(({ m2, label }) => <option key={m2.id} value={m2.id}>{label}</option>)}
+                                                            </select>
+                                                          </div>
+                                                        )}
+                                                        <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '5px', lineHeight: 1.45 }}>
+                                                          {match.continuation
+                                                            ? 'No goals on — they were given on the first day and carry in the score above.'
+                                                            : hs.goals > 0
+                                                              ? `Goals on: ${fmtHalf(hs.goals)} to ${hs.team === 'A' ? (match.teamA?.name || 'Team A') : (match.teamB?.name || 'Team B')}${match.arenaHandicap ? ' (arena, \u00d72)' : ` (grass, \u00d7${matchChukkas(match)}\u00f76)`}`
+                                                              : 'Goals on: none — the teams are level.'}
+                                                        </div>
+                                                      </div>
+                                                    );
+                                                  })()}
                                                   <div style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
                                                     <input className="input-field" placeholder="Goal judges" value={match.goalJudges || ''} onChange={e => updMatch(di, mi, m => ({...m, goalJudges: e.target.value}))} style={{ flex: 1, minWidth: 0, padding: '5px 7px', fontSize: '12px' }} />
                                                     <input className="input-field" placeholder="Timekeeper" value={match.timekeeper || ''} onChange={e => updMatch(di, mi, m => ({...m, timekeeper: e.target.value}))} style={{ flex: 1, minWidth: 0, padding: '5px 7px', fontSize: '12px' }} />
@@ -6691,7 +6813,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                   updDay(di, d => ({...d, matches: copiedMatches}));
                                                 }} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--burgundy)', color: 'var(--burgundy)', padding: '5px', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', letterSpacing: '0.5px', marginBottom: '2px', opacity: 0.75 }}>↩ Copy teams from Day 1</button>
                                               )}
-                                              <button onClick={() => updDay(di, d => ({...d, matches: [...(d.matches||[]), {id:'m'+Date.now(), time:'', label:'', teamA:{name:'', handicap:null, players:[]}, teamB:{name:'', handicap:null, players:[]}, chukkas:4, umpires:'', commentator:'', goalJudges:'', timekeeper:'', notes:''}]}))} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--muted)', padding: '5px', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', letterSpacing: '0.5px', marginBottom: '2px' }}>+ Add match</button>
+                                              <button onClick={() => updDay(di, d => ({...d, matches: [...(d.matches||[]), {id:'m'+Date.now(), time:'', label:'', teamA:{name:'', handicap:null, players:[]}, teamB:{name:'', handicap:null, players:[]}, chukkas:4, umpires:'', commentator:'', goalJudges:'', timekeeper:'', notes:'', arenaHandicap: isArenaGround(d.ground)}]}))} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--muted)', padding: '5px', borderRadius: '3px', fontSize: '10px', cursor: 'pointer', letterSpacing: '0.5px', marginBottom: '2px' }}>+ Add match</button>
                                             </div>
                                           ))}
                                           <button onClick={() => setDraft({...draft, days: [...(draft.days||[]), {id:'d'+Date.now(), dateLabel:'', ground:'', matches:[], prizegiving:false}]})} style={{ width: '100%', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--muted)', padding: '7px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '8px' }}>+ Add day</button>
@@ -6993,8 +7115,35 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
           {activeTab === 'live' && (
             <div style={{ maxWidth: '760px', margin: '0 auto' }}>
-              <div style={{ fontWeight: 700, fontSize: '20px', letterSpacing: '0.5px', color: 'var(--burgundy)', textTransform: 'uppercase', marginBottom: '4px' }}>Live Game</div>
-              <div style={{ fontSize: '12px', color: '#777', marginBottom: '16px' }}>Live scores update automatically as matches are played.</div>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: '20px', letterSpacing: '0.5px', color: 'var(--burgundy)', textTransform: 'uppercase', marginBottom: '4px' }}>Live Game</div>
+                  <div style={{ fontSize: '12px', color: '#777' }}>Live scores update automatically as matches are played.</div>
+                </div>
+                {(canFullscreen() || canWakeLock()) && (
+                  <button
+                    type="button"
+                    onClick={toggleStageMode}
+                    title={stageMode ? 'Leave full screen and let the screen sleep again' : 'Fill the screen and stop it going to sleep'}
+                    style={{
+                      flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '8px 13px', borderRadius: '999px', cursor: 'pointer',
+                      fontSize: '12px', fontWeight: 600, fontFamily: 'inherit', letterSpacing: '0.3px',
+                      border: stageMode ? 'none' : '1px solid var(--burgundy)',
+                      background: stageMode ? 'var(--burgundy)' : 'transparent',
+                      color: stageMode ? 'var(--cream)' : 'var(--burgundy)',
+                    }}
+                  >
+                    {stageMode ? '\u2715 Exit full screen' : '\u26f6 Full screen'}
+                  </button>
+                )}
+              </div>
+              {stageMode && (
+                <div style={{ fontSize: '11px', color: 'var(--muted)', margin: '8px 0 0', lineHeight: 1.45 }}>
+                  {stageNote || 'Full screen \u00b7 the screen won\u2019t go to sleep while this is on.'}
+                </div>
+              )}
+              <div style={{ marginBottom: '16px' }} />
               {(
                 (() => {
                   // Members only get published draws here; captains see everything.

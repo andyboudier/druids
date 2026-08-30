@@ -57,6 +57,7 @@ const MARGIN = 18;
 // here so existing importers of tournamentPdf keep working unchanged.
 export { DEFAULT_COMMITTEE, teamHandicap } from './pdfShared';
 import { DEFAULT_COMMITTEE, teamHandicap } from './pdfShared';
+import { headStartFor } from './handicap';
 
 const RULES = [
   'ALL PLAYERS MUST HAVE A VALID HPA MEMBERSHIP BEFORE PLAYING IN ANY MATCH OR TOURNAMENT',
@@ -107,14 +108,7 @@ const matchChukkas = (match) => {
 // the lower-handicap team. Mirrors the app's live-scoring / fixture display.
 // (teamHandicap itself now lives in ./pdfShared — see the re-export above.)
 
-const pdfHeadStart = (match, teamKey) => {
-  const hA = teamHandicap(match && match.teamA) || 0;
-  const hB = teamHandicap(match && match.teamB) || 0;
-  if (hA === hB) return 0;
-  const units = Math.abs(hA - hB) * matchChukkas(match);
-  const goals = Math.floor(units / 6) + (units % 6 > 0 ? 0.5 : 0);
-  return teamKey === (hA < hB ? 'A' : 'B') ? goals : 0;
-};
+const pdfHeadStart = (match, teamKey) => headStartFor(match, teamKey, teamHandicap);
 
 // Format a score, showing a trailing half as ½ (1.5 → "1½", 0.5 → "½").
 const fmtScore = (n) => {
