@@ -6,6 +6,10 @@ import {
 import { DEFAULT_COMMITTEE, teamHandicap } from './pdfShared';
 import { headStartFor, headStartGoals, matchChukkas, isArenaGround, normaliseHandicapRules } from './handicap';
 import { startLiveScore, updateLiveScore, endLiveScore } from './liveScoreActivity';
+import {
+  trophyKeyFor, loadTrophyIndex, loadTrophyImage, saveTrophyImage,
+  deleteTrophyImage, prepareTrophyImage,
+} from './trophyStore';
 
 // The PDF generator is only reachable behind an explicit print action, so it is
 // loaded on demand. Same signature as before, so call sites are unchanged apart
@@ -910,6 +914,15 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // fixtures (and wipe ad hoc ones) for everyone.
   const fixturesLoadedRef = useRef(false);
   const [fixtureEditor, setFixtureEditor] = useState(null); // null | { id?, month, date, name, level }
+  // The trophy photo control inside the fixture editor. The index is the small
+  // shared list of what the library holds; the preview is the one photo being
+  // shown, fetched on demand.
+  const [trophyIndex, setTrophyIndex] = useState({});
+  const [trophyPreview, setTrophyPreview] = useState(null); // { key, dataUrl }
+  const [trophyBusy, setTrophyBusy] = useState('');
+  const [trophyError, setTrophyError] = useState('');
+  const [trophyPickerOpen, setTrophyPickerOpen] = useState(false);
+  const trophyFileRef = useRef(null);
   const [trophyDraft, setTrophyDraft] = useState({}); // fxId -> in-progress "trophy looked after by" text, persisted on blur
   const [editingDetailsId, setEditingDetailsId] = useState(null);
   // Stage mode — Live Game filling the screen with the phone kept awake, for a
@@ -3403,8 +3416,78 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     try { await window.storage.set('fixtures', JSON.stringify(next), true); }
     catch (e) { setFError('Saved locally only — check your connection.'); }
   };
-  const openAddFixture = () => { setFError(''); setFixtureEditor({ month: MONTHS_ORDER[0], date: '', name: '', level: '', titleLines: [] }); };
-  const openEditFixture = (fx) => { setFError(''); setFixtureEditor({ id: fx.id, month: fx.month, date: fx.date, name: fx.name, level: fx.level || '', titleLines: Array.isArray(fx.titleLines) ? [...fx.titleLines] : [] }); };
+  const openAddFixture = () => { setFError(''); resetTrophyUi(); setFixtureEditor({ month: MONTHS_ORDER[0], date: '', name: '', level: '', titleLines: [], trophyKey: '' }); };
+  const openEditFixture = (fx) => { setFError(''); resetTrophyUi(); setFixtureEditor({ id: fx.id, month: fx.month, date: fx.date, name: fx.name, level: fx.level || '', titleLines: Array.isArray(fx.titleLines) ? [...fx.titleLines] : [], trophyKey: fx.trophyKey || '' }); };
+
+  // ── The trophy photograph ──────────────────────────────────────────────
+  // A trophy is played for year after year, so the photo is uploaded once and
+  // picked from the library every year after that. The fixture stores only the
+  // key; trophyStore.js holds the picture, out of the way of the app's own data.
+  // The photo the front page should carry, or null. Fetched at print time so a
+  // programme always gets whatever the library holds now.
+  const trophyImageFor = async (fx) => (fx && fx.trophyKey ? await loadTrophyImage(fx.trophyKey) : null);
+
+  const resetTrophyUi = () => { setTrophyError(''); setTrophyBusy(''); setTrophyPickerOpen(false); setTrophyPreview(null); };
+
+  // Refresh the library list whenever the editor opens, so a photo added on
+  // another device is offered here too.
+  useEffect(() => {
+    if (!fixtureEditor) return;
+    let live = true;
+    loadTrophyIndex().then((idx) => { if (live) setTrophyIndex(idx || {}); });
+    return () => { live = false; };
+  }, [!!fixtureEditor]);
+
+  // Fetch the selected photo for the preview. Only ever one at a time.
+  useEffect(() => {
+    const key = fixtureEditor && fixtureEditor.trophyKey;
+    if (!key) { setTrophyPreview(null); return undefined; }
+    if (trophyPreview && trophyPreview.key === key) return undefined;
+    let live = true;
+    loadTrophyImage(key).then((rec) => {
+      if (live) setTrophyPreview(rec && rec.dataUrl ? { key, dataUrl: rec.dataUrl } : null);
+    });
+    return () => { live = false; };
+  }, [fixtureEditor && fixtureEditor.trophyKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const uploadTrophyPhoto = async (file) => {
+    if (!file) return;
+    const name = (fixtureEditor && fixtureEditor.name || '').trim();
+    if (!name) { setTrophyError('Give the fixture a name first — the photo is filed under it.'); return; }
+    setTrophyError('');
+    setTrophyBusy('Preparing the photo…');
+    try {
+      const { dataUrl, w, h } = await prepareTrophyImage(file);
+      const key = trophyKeyFor(name);
+      setTrophyBusy('Saving…');
+      await saveTrophyImage(key, { name, dataUrl, w, h });
+      setTrophyIndex(await loadTrophyIndex());
+      setTrophyPreview({ key, dataUrl });
+      setEd('trophyKey', key);
+    } catch (e) {
+      setTrophyError(e && e.message ? e.message : 'Could not save that photo.');
+    } finally {
+      setTrophyBusy('');
+    }
+  };
+
+  // Take the photo off this fixture. The picture stays in the library for other
+  // years — removing it everywhere is a separate, deliberate act.
+  const clearTrophyPhoto = () => { setEd('trophyKey', ''); setTrophyPreview(null); setTrophyError(''); };
+
+  const deleteTrophyFromLibrary = async (key) => {
+    setTrophyError('');
+    setTrophyBusy('Removing…');
+    try {
+      await deleteTrophyImage(key);
+      setTrophyIndex(await loadTrophyIndex());
+      if (fixtureEditor && fixtureEditor.trophyKey === key) clearTrophyPhoto();
+    } catch (e) {
+      setTrophyError('Could not remove that photo.');
+    } finally {
+      setTrophyBusy('');
+    }
+  };
   const setEd = (field, value) => setFixtureEditor(prev => prev ? { ...prev, [field]: value } : prev);
   // Cover title lines (optional, up to 5) — printed verbatim on the programme's
   // front page instead of the auto-formatted fixture name.
@@ -3433,7 +3516,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     if (!ed.date.trim()) { setFError('Please enter a date, e.g. “Sat 30 & Sun 31 May”.'); return; }
     setFError('');
     const titleLines = (ed.titleLines || []).map(s => (s || '').trim()).filter(Boolean).slice(0, MAX_TITLE_LINES);
-    const clean = { month: ed.month, date: ed.date.trim(), name: ed.name.trim(), level: ed.level.trim(), titleLines };
+    const clean = { month: ed.month, date: ed.date.trim(), name: ed.name.trim(), level: ed.level.trim(), titleLines, trophyKey: (ed.trophyKey || '').trim() };
     let next;
     if (ed.id) {
       next = fixtures.map(f => f.id === ed.id ? { ...f, ...clean } : f);
@@ -3531,6 +3614,86 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             ))}
             {(fixtureEditor.titleLines || []).length < MAX_TITLE_LINES && (
               <button onClick={addTitleLine} style={{ alignSelf: 'flex-start', background: 'transparent', border: '1px dashed var(--line)', color: 'var(--burgundy)', padding: '8px 12px', borderRadius: '4px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>＋ Add line</button>
+            )}
+          </div>
+
+          {/* Trophy photograph — printed on the programme's front page. Uploaded
+              once per cup and reused every year it is played for. */}
+          <div style={{ borderTop: '1px solid var(--line)', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: 1.45 }}>
+              <strong style={{ color: 'var(--ink)' }}>Trophy photo (optional).</strong> Prints on the programme’s front page. Upload it once and pick it from the library in later years.
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <div style={{
+                width: '74px', height: '74px', flexShrink: 0, borderRadius: '6px', overflow: 'hidden',
+                border: '1px solid var(--line)', background: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {trophyPreview
+                  ? <img src={trophyPreview.dataUrl} alt="Trophy" style={{ maxWidth: '100%', maxHeight: '100%', display: 'block' }} />
+                  : <span style={{ fontSize: '10px', color: 'var(--muted)', textAlign: 'center', lineHeight: 1.3 }}>No<br />photo</span>}
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'flex-start' }}>
+                <input
+                  ref={trophyFileRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; uploadTrophyPhoto(f); }}
+                />
+                <button
+                  onClick={() => trophyFileRef.current && trophyFileRef.current.click()}
+                  disabled={!!trophyBusy}
+                  style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--burgundy)', padding: '8px 12px', borderRadius: '4px', fontSize: '12px', fontWeight: 600, cursor: trophyBusy ? 'default' : 'pointer', opacity: trophyBusy ? 0.5 : 1 }}
+                >{trophyPreview ? 'Replace photo' : '＋ Upload photo'}</button>
+
+                {Object.keys(trophyIndex).length > 0 && (
+                  <button
+                    onClick={() => setTrophyPickerOpen(o => !o)}
+                    disabled={!!trophyBusy}
+                    style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', padding: '8px 12px', borderRadius: '4px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                  >{trophyPickerOpen ? 'Close library' : `Library (${Object.keys(trophyIndex).length})`}</button>
+                )}
+
+                {fixtureEditor.trophyKey && (
+                  <button
+                    onClick={clearTrophyPhoto}
+                    style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', padding: '8px 12px', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}
+                  >Remove from this fixture</button>
+                )}
+
+                {trophyBusy && <div style={{ fontSize: '11px', color: 'var(--muted)', width: '100%' }}>{trophyBusy}</div>}
+                {trophyError && <div style={{ fontSize: '11px', color: 'var(--danger)', width: '100%', lineHeight: 1.4 }}>{trophyError}</div>}
+              </div>
+            </div>
+
+            {trophyPickerOpen && (
+              <div style={{ border: '1px solid var(--line)', borderRadius: '6px', padding: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '210px', overflowY: 'auto' }}>
+                {Object.entries(trophyIndex)
+                  .sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''))
+                  .map(([key, meta]) => (
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        onClick={() => { setEd('trophyKey', key); setTrophyPickerOpen(false); }}
+                        style={{
+                          flex: 1, minWidth: 0, textAlign: 'left', background: fixtureEditor.trophyKey === key ? 'var(--cream-warm)' : 'transparent',
+                          border: 'none', padding: '8px 10px', borderRadius: '4px', cursor: 'pointer',
+                          fontSize: '13px', color: 'var(--ink)', fontFamily: 'inherit',
+                        }}
+                      >
+                        {meta.name || key}
+                        <span style={{ color: 'var(--muted)', fontSize: '11px', marginLeft: '6px' }}>{Math.round((meta.bytes || 0) / 1024)} kB</span>
+                      </button>
+                      <button
+                        onClick={() => deleteTrophyFromLibrary(key)}
+                        title="Delete this photo from the library"
+                        style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', width: '30px', height: '30px', borderRadius: '4px', fontSize: '15px', lineHeight: 1, cursor: 'pointer', flexShrink: 0 }}
+                      >×</button>
+                    </div>
+                  ))}
+              </div>
             )}
           </div>
 
@@ -4809,7 +4972,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               interestClosed={isInterestClosed(fx)}
               onClose={() => setBoardFixtureId(null)}
               onPrint={async () => {
-                try { await generateTournamentPdf(fx, draft, {}, { committee }); }
+                try { await generateTournamentPdf(fx, draft, {}, { committee, trophyImage: await trophyImageFor(fx) }); }
                 catch (err) { alert(err && err.message ? err.message : String(err)); }
               }}
             />
@@ -6474,7 +6637,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                     // Single-day running-order programme: scores stripped so it prints clean.
                                                     const cleanDay = JSON.parse(JSON.stringify(day));
                                                     (cleanDay.matches || []).forEach(m => { m.scoreA = null; m.scoreB = null; });
-                                                    await generateTournamentPdf(fx, det, chukkaByDow, { days: [cleanDay], subtitle: day.dateLabel || '', filenameDate: day.dateLabel || '', committee });
+                                                    await generateTournamentPdf(fx, det, chukkaByDow, { days: [cleanDay], subtitle: day.dateLabel || '', filenameDate: day.dateLabel || '', committee, trophyImage: await trophyImageFor(fx) });
                                                   } catch (err) { fail(err); }
                                                 }} style={outlineBtn}>
                                                   ↓ Day {dayIdx + 1} programme{day.dateLabel ? ` · ${day.dateLabel}` : ''}
@@ -6490,21 +6653,21 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                                       (c.matches || []).forEach(m => { m.scoreA = null; m.scoreB = null; });
                                                       return c;
                                                     });
-                                                    await generateTournamentPdf(fx, det, chukkaByDow, { days: cleanDays, committee });
+                                                    await generateTournamentPdf(fx, det, chukkaByDow, { days: cleanDays, committee, trophyImage: await trophyImageFor(fx) });
                                                   } catch (err) { fail(err); }
                                                 }} style={outlineBtn}>
                                                   ↓ Full programme — all {days.length} days
                                                 </button>
                                               )}
                                               <button onClick={async () => {
-                                                try { await generateTournamentPdf(fx, det, {}, { resultsSummary: true, hideChukkas: true, committee }); }
+                                                try { await generateTournamentPdf(fx, det, {}, { resultsSummary: true, hideChukkas: true, committee, trophyImage: await trophyImageFor(fx) }); }
                                                 catch (err) { fail(err); }
                                               }} style={solidBtn}>
                                                 ↓ Summary — all days with scores
                                               </button>
                                               {(det.days || []).some(d => (d.matches || []).some(m => (m.division || '').trim())) && (
                                                 <button onClick={async () => {
-                                                  try { await generateTournamentPdf(fx, det, {}, { divisionSheets: true, committee }); }
+                                                  try { await generateTournamentPdf(fx, det, {}, { divisionSheets: true, committee, trophyImage: await trophyImageFor(fx) }); }
                                                   catch (err) { fail(err); }
                                                 }} style={outlineBtn}>
                                                   ↓ Team sheets by division
