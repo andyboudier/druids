@@ -675,6 +675,91 @@ while (movedOne && guard-- > 0) {
   }
 }
 
+// Fill every seat. An empty seat is two problems at once: that chukka plays a
+// man short, and somebody who asked for a chukka is not getting one. Both
+// outrank keeping everybody's run unbroken, so this pass will hand a player a
+// break if that is what it takes to leave no seat empty.
+//
+// It is worth being concrete about why a pass is needed at all. Seating players
+// one at a time cannot always fill an evening even when a perfect filling
+// exists: on an 18-player Saturday wanting 72 chukkas in 9 chukkas of 8, the
+// last free seat came out in a chukka the short player was already in, so no
+// amount of adding could reach it. Somebody else has to move first.
+//
+// Two moves, cheapest first, where cost is the chukkas a player ends up sitting
+// out that they were not sitting out before:
+//   (a) a player who is short simply takes the seat;
+//   (b) a player already in the draw shifts into the seat, freeing the one they
+//       leave for a player who is short.
+// (b) is what solves the case above: the free seat is in the last chukka, a
+// player from the middle moves into it, and the short player takes the middle
+// seat and keeps an unbroken run.
+const idleOf = (list) =>
+  list.length ? Math.max(...list) - Math.min(...list) + 1 - list.length : 0;
+const costOfAdding = (st, c) => idleOf([...st.mine, c]) - idleOf(st.mine);
+const costOfMoving = (st, from, to) =>
+  idleOf([...st.mine.filter(x => x !== from), to]) - idleOf(st.mine);
+
+let repairs = numChukkas * SLOTS_PER_CHUKKA;
+let seatFilled = true;
+while (seatFilled && repairs-- > 0) {
+  seatFilled = false;
+  const stillShort = state.filter(s => s.mine.length < s.target);
+  if (!stillShort.length) break;
+
+  for (let c = 0; c < numChukkas && !seatFilled; c++) {
+    if (!hasRoom(c)) continue;
+
+    // (a) Straight in.
+    let direct = null;
+    for (const s of stillShort) {
+      if (c < s.win.from || c > s.win.to) continue;
+      if (isIn(c, s.player) || !spacingOk(s.player, c, s.mine)) continue;
+      const cost = costOfAdding(s, c);
+      if (!direct || cost < direct.cost) direct = { s, cost };
+    }
+    if (direct) {
+      seat(direct.s, c);
+      direct.s.mine.sort((a, b) => a - b);
+      seatFilled = true;
+      break;
+    }
+
+    // (b) Somebody shifts into the seat so a short player can have theirs.
+    let chain = null;
+    for (const s of stillShort) {
+      for (let d = s.win.from; d <= s.win.to; d++) {
+        if (hasRoom(d)) continue;                       // (a) will reach that seat
+        if (isIn(d, s.player) || !spacingOk(s.player, d, s.mine)) continue;
+        for (const q of chukkaPlayers[d]) {
+          if (q.vip) continue;                          // VIPs are never moved
+          const qs = stateOf(q.id);
+          if (!qs || qs === s) continue;
+          if (c < qs.win.from || c > qs.win.to) continue;
+          if (isIn(c, q)) continue;
+          const qAfter = qs.mine.filter(x => x !== d);
+          if (!spacingOk(q, c, qAfter)) continue;
+          const cost = costOfMoving(qs, d, c) + costOfAdding(s, d);
+          if (!chain || cost < chain.cost) chain = { s, qs, d, cost };
+        }
+      }
+    }
+    if (chain) {
+      const { s, qs, d } = chain;
+      qs.mine = qs.mine.filter(x => x !== d);
+      chukkaPlayers[d] = chukkaPlayers[d].filter(p => p.id !== qs.player.id);
+      qs.mine.push(c);
+      qs.mine.sort((a, b) => a - b);
+      chukkaPlayers[c].push(qs.player);
+      seat(s, d);
+      s.mine.sort((a, b) => a - b);
+      seatFilled = true;
+      break;
+    }
+  }
+}
+
+
 const assignments = new Map();
 state.forEach((st) => {
   if (st.mine.length < st.cappedWanted) {
