@@ -416,7 +416,11 @@ const chukkaTime = (idx, startMin) => {
 // lopsided chukka just has two players switch bibs for that one chukka. Team
 // sums are recomputed from the players first, so this also repairs draws that
 // were generated before this balancing existed.
-const MAX_OK_TEAM_DIFF = 2;
+// Teams within a chukka are evened to within one goal, not two. Two was set
+// when the draw spread everyone thinly and there was always somebody to swap;
+// with players now kept in unbroken runs there is less to work with, and
+// pushing to one keeps the games as close as they were before.
+const MAX_OK_TEAM_DIFF = 1;
 function rebalanceChukkaTeams(chukkas) {
   (chukkas || []).forEach(ck => {
     if (!ck || !Array.isArray(ck.teamA) || !Array.isArray(ck.teamB)) return;
@@ -479,116 +483,204 @@ while (numChukkas > 1 && effTotalSlots(numChukkas) < MIN_PLAYERS_PER_CHUKKA * nu
 // Each chukka has a strict cap of SLOTS_PER_CHUKKA (= 8 = 4 per team)
 const chukkaPlayers = Array.from({ length: numChukkas }, () => []);
 
-const assignments = new Map();
-const capped = []; // wanted more chukkas than the evening has at all
-const reduced = []; // got fewer chukkas than wanted due to capacity
+// ── How the evening is shared out ────────────────────────────────────────
+// Three rules, in order of precedence:
+//
+//   1. Fair share. If more chukkas are wanted than the evening holds, the
+//      shortfall is spread by capping the biggest requests first, so nobody is
+//      left with nothing while someone else has their full six. This replaced a
+//      straight greedy fill in roster order, where a full evening could leave
+//      the last person on the list with no chukkas at all.
+//   2. One unbroken run. A player's chukkas are consecutive wherever they fit,
+//      so people play and go home instead of sitting out the middle of the
+//      evening. Runs are placed into the emptiest part of the player's window,
+//      which staggers the club naturally: the first four take the first
+//      chukkas, the next four the ones after, and so on.
+//      This replaced a "put them in the least-loaded chukka" fill that spread
+//      everybody thinly — someone asking for five could be given 1, 2, 3, 8, 9.
+//   3. A break only when nothing else fits, and never more than one.
+//
+// Handicap balance is deliberately NOT decided here: who plays when is settled
+// first, and the teams within each chukka are evened out afterwards by shirt
+// swaps (see the colouring pass and rebalanceChukkaTeams below).
 
-// Helper: place one pass of chukkas for a player given a minimum step size.
-// Returns the list of chukka indices placed, updating chukkaPlayers and
-// chukkaPlayers in place. No per-chukka hard cap — uneven teams are allowed.
-const placePlayer = (player, wantedCount, availableIdx, availableToIdx, minStep) => {
-  const placed = [];
+const hasRoom = (c) => chukkaPlayers[c].length < SLOTS_PER_CHUKKA;
+const isIn = (c, player) => chukkaPlayers[c].some(q => q.id === player.id);
 
-  if (minStep <= 1) {
-    // Regular players: spread across the least-loaded chukkas so the load is
-    // even and as many people as possible get their full requested count.
-    while (placed.length < wantedCount) {
-      let bestC = -1, bestLoad = Infinity;
-      for (let c = availableIdx; c <= availableToIdx; c++) {
-        if (chukkaPlayers[c].length >= SLOTS_PER_CHUKKA) continue; // never exceed 4v4
-        if (placed.includes(c)) continue;
-        if (chukkaPlayers[c].length < bestLoad) { bestLoad = chukkaPlayers[c].length; bestC = c; }
-      }
-      if (bestC === -1) break;
-      placed.push(bestC);
-      chukkaPlayers[bestC].push(player);
-    }
-    return placed.sort((a, b) => a - b);
-  }
+// A no-consecutive player must never end up in back-to-back chukkas.
+const spacingOk = (player, c, mine) =>
+  !player.noConsecutive || !mine.some(x => Math.abs(x - c) < 2);
+const canTake = (player, c, mine) =>
+  c >= 0 && c < numChukkas && hasRoom(c) && !isIn(c, player) && spacingOk(player, c, mine);
 
-  // No-consecutive players: keep an every-other-chukka rhythm — a preferred gap
-  // of exactly minStep (= 2) — so they're never back-to-back AND never stranded
-  // (e.g. first chukka then nothing until the last). Pick the start phase
-  // (odd/even) that's less loaded and can fit the most, then step by 2, only
-  // widening the gap past a full chukka.
-  const phaseScore = (start) => {
-    let load = 0, fit = 0, last = -Infinity;
-    for (let c = start; c <= availableToIdx && fit < wantedCount; c++) {
-      if (c - last < minStep) continue;
-      if (chukkaPlayers[c].length >= SLOTS_PER_CHUKKA) continue;
-      load += chukkaPlayers[c].length; fit++; last = c;
-    }
-    // Heavily prefer phases that fit more of the requested chukkas, then lighter load.
-    return (wantedCount - fit) * 1000 + load;
-  };
-  let cursor = availableIdx;
-  if (availableIdx + 1 <= availableToIdx && phaseScore(availableIdx + 1) < phaseScore(availableIdx)) {
-    cursor = availableIdx + 1;
+// Where a player can play, and how many chukkas that leaves them.
+const windowOf = (player) => {
+  let from = 0;
+  if (player.availableFrom) {
+    const t = parseTime(player.availableFrom);
+    if (t !== null) from = Math.max(0, Math.ceil((t - startMin) / CHUKKA_INTERVAL_MIN));
   }
-  while (placed.length < wantedCount && cursor <= availableToIdx) {
-    // earliest non-full slot at/after the cursor that keeps the >=2 gap
-    let c = cursor;
-    while (c <= availableToIdx && (
-      chukkaPlayers[c].length >= SLOTS_PER_CHUKKA ||
-      (placed.length && c - placed[placed.length - 1] < minStep)
-    )) c++;
-    if (c > availableToIdx) break;
-    placed.push(c);
-    chukkaPlayers[c].push(player);
-    cursor = c + minStep; // prefer the next slot exactly 2 chukkas later
+  let to = numChukkas - 1;
+  if (player.availableTo) {
+    const t = parseTime(player.availableTo);
+    if (t !== null) to = Math.min(numChukkas - 1, Math.floor((t - startMin) / CHUKKA_INTERVAL_MIN));
   }
-  return placed.sort((a, b) => a - b);
+  return { from, to, count: Math.max(0, to - from + 1) };
 };
 
-ordered.forEach(player => {
-  const wantedRaw = player.chukkas;
+const capped = [];  // wanted more chukkas than the evening has at all
+const reduced = []; // got fewer than wanted, because the evening was full
 
-  let availableIdx = 0;
-  if (player.availableFrom) {
-    const targetMin = parseTime(player.availableFrom);
-    if (targetMin !== null) {
-      availableIdx = Math.max(0, Math.ceil((targetMin - startMin) / CHUKKA_INTERVAL_MIN));
+const state = ordered.map((player) => {
+  const win = windowOf(player);
+  const cappedWanted = Math.min(player.chukkas, numChukkas);
+  if (cappedWanted < player.chukkas) {
+    capped.push({ player, requested: player.chukkas, given: cappedWanted });
+  }
+  return { player, win, cappedWanted, want: Math.min(cappedWanted, win.count), target: 0, mine: [] };
+});
+
+// Rule 1. Max-min fair share: find the highest ceiling K such that capping
+// every request at K fits the evening, then hand the few remaining slots to the
+// keenest in roster order. Below capacity this is a no-op and everyone gets
+// exactly what they asked for. VIPs are exempt — they are never cut.
+const capacity = numChukkas * SLOTS_PER_CHUKKA;
+const vipDemand = state.filter(s => s.player.vip).reduce((n, s) => n + s.want, 0);
+const rest = state.filter(s => !s.player.vip);
+const restCapacity = Math.max(0, capacity - vipDemand);
+let ceiling = numChukkas;
+const demandAt = (K) => rest.reduce((n, s) => n + Math.min(s.want, K), 0);
+while (ceiling > 1 && demandAt(ceiling) > restCapacity) ceiling--;
+state.forEach((s) => { s.target = s.player.vip ? s.want : Math.min(s.want, ceiling); });
+let spare = restCapacity - demandAt(ceiling);
+for (const s of rest) {
+  if (spare <= 0) break;
+  if (s.target < s.want) { s.target++; spare--; }
+}
+
+// Rule 2. Most-constrained first: someone who can only play the last three
+// chukkas has to be seated before someone who can play any of the nine, or the
+// narrow window fills up around them. VIPs first, then roster order on ties.
+const placementOrder = state.slice().sort((a, b) => {
+  if (!!a.player.vip !== !!b.player.vip) return a.player.vip ? -1 : 1;
+  if (a.win.count !== b.win.count) return a.win.count - b.win.count;
+  return state.indexOf(a) - state.indexOf(b);
+});
+
+// The best unbroken run of `len` chukkas in a player's window: the one sitting
+// in the emptiest stretch. Cost is how many players are already in those
+// chukkas, so an untouched stretch always wins — which is what staggers the
+// evening into blocks instead of stacking everyone into chukka one.
+const bestRun = (st, len) => {
+  const { player, win } = st;
+  let best = -1, bestCost = Infinity;
+  for (let s = win.from; s + len - 1 <= win.to; s++) {
+    let cost = 0, ok = true;
+    for (let c = s; c < s + len; c++) {
+      if (!canTake(player, c, [])) { ok = false; break; }
+      cost += chukkaPlayers[c].length;
+    }
+    if (ok && cost < bestCost) { best = s; bestCost = cost; }
+  }
+  return best;
+};
+
+const seat = (st, c) => { st.mine.push(c); chukkaPlayers[c].push(st.player); };
+
+placementOrder.forEach((st) => {
+  const { player, win } = st;
+  if (st.target <= 0) return;
+
+  // No-consecutive players never want a run; they are spaced by their own rule.
+  if (!player.noConsecutive) {
+    for (let len = st.target; len >= 1; len--) {
+      const start = bestRun(st, len);
+      if (start === -1) continue;
+      for (let c = start; c < start + len; c++) seat(st, c);
+      break;
     }
   }
-  let availableToIdx = numChukkas - 1;
-  if (player.availableTo) {
-    const targetMin = parseTime(player.availableTo);
-    if (targetMin !== null) {
-      const idx = Math.floor((targetMin - startMin) / CHUKKA_INTERVAL_MIN);
-      availableToIdx = Math.min(numChukkas - 1, idx);
+
+  let breaks = 0;
+  // Top up anything the run could not cover. Preference order, and it matters:
+  // straight onto the end of the run first, then one chukka off, and only if the
+  // player would otherwise go short, a longer wait. Rule 1 outranks rule 6 —
+  // better a player sits out two chukkas in the middle than loses them.
+  // Whichever it is, they get at most one break in the evening.
+  const runGap = (c) => {
+    if (!st.mine.length) return 0;                       // nothing placed yet
+    const lo = Math.min(...st.mine), hi = Math.max(...st.mine);
+    if (c === hi + 1 || c === lo - 1) return 0;          // extends the run
+    return c > hi ? c - hi - 1 : lo - c - 1;             // chukkas sat out
+  };
+  while (st.mine.length < st.target) {
+    let best = -1, bestCost = Infinity;
+    for (let c = win.from; c <= win.to; c++) {
+      if (!canTake(player, c, st.mine)) continue;
+      const gap = runGap(c);
+      if (gap > 0 && st.mine.length && breaks >= 1) continue;   // only ever one break
+      // Cheapest first: unbroken, then a single chukka out, then longer waits.
+      const cost = gap === 0 ? chukkaPlayers[c].length / 100 : gap * 10;
+      if (cost < bestCost) { best = c; bestCost = cost; }
     }
+    if (best === -1) break;
+    if (st.mine.length && runGap(best) > 0) breaks++;
+    seat(st, best);
   }
-  const availableCount = Math.max(0, availableToIdx - availableIdx + 1);
+  st.mine.sort((a, b) => a - b);
+});
 
-  // Cap by total chukkas in the schedule
-  const cappedWanted = Math.min(wantedRaw, numChukkas);
-  if (cappedWanted < wantedRaw) {
-    capped.push({ player, requested: wantedRaw, given: cappedWanted });
+// Rule 1, enforced after the fact. Placing one player at a time can still leave
+// the last person short while someone else has their full count — the ceiling
+// above only knows the evening's total capacity, not that a late arrival is
+// competing for five chukkas rather than nine. So: while anyone is short, take
+// a chukka from someone who has more and give it to them. A chukka is only ever
+// taken from the end of a run, so nobody's evening is broken in two to fix
+// someone else's.
+const stateOf = (id) => state.find(x => x.player.id === id);
+let guard = numChukkas * SLOTS_PER_CHUKKA;
+let movedOne = true;
+while (movedOne && guard-- > 0) {
+  movedOne = false;
+  const short = state.filter(s => s.mine.length < s.target)
+    .sort((a, b) => a.mine.length - b.mine.length);
+  for (const s of short) {
+    for (let c = s.win.from; c <= s.win.to && !movedOne; c++) {
+      if (isIn(c, s.player) || !spacingOk(s.player, c, s.mine)) continue;
+      // Taking it must not strand the recipient further from their own run than
+      // the one break rule allows.
+      const lo = s.mine.length ? Math.min(...s.mine) : null;
+      const hi = s.mine.length ? Math.max(...s.mine) : null;
+      const adjacent = hi === null || c === hi + 1 || c === lo - 1;
+      const span = hi === null ? 1 : Math.max(hi, c) - Math.min(lo, c) + 1;
+      // Same one-chukka limit as above: never fix one player's shortfall by
+      // stranding them at the far end of the evening.
+      if (!adjacent && span - (s.mine.length + 1) > 1) continue;
+      const donor = chukkaPlayers[c].find((q) => {
+        if (q.vip) return false;
+        const ds = stateOf(q.id);
+        if (!ds || ds.mine.length <= s.mine.length + 1) return false;
+        // only off the end of their run, so what is left stays unbroken
+        return c === Math.min(...ds.mine) || c === Math.max(...ds.mine);
+      });
+      if (!donor) continue;
+      const ds = stateOf(donor.id);
+      ds.mine = ds.mine.filter(x => x !== c);
+      chukkaPlayers[c] = chukkaPlayers[c].filter(q => q.id !== donor.id);
+      s.mine.push(c); s.mine.sort((a, b) => a - b);
+      chukkaPlayers[c].push(s.player);
+      movedOne = true;
+    }
+    if (movedOne) break;
   }
-  // For VIP players, never reduce below their requested count due to capacity;
-  // they have already been placed first so they should always get their slots
-  // (subject only to the total-chukka cap above and their availability window).
-  const wanted = Math.min(cappedWanted, availableCount);
+}
 
-  // noConsecutive players require a gap of at least 1 chukka between
-  // assignments (so they are never in back-to-back chukkas). All other
-  // players use a step of 1 (adjacent slots are fine).
-  const minStep = player.noConsecutive ? 2 : 1;
-  let myChukkas = placePlayer(player, wanted, availableIdx, availableToIdx, minStep);
-
-  // Intentionally NO adjacent-slot fallback for noConsecutive players: if the
-  // gap-preserving pass can't fit every requested chukka (capacity pressure),
-  // we leave them short — reported below — rather than break the
-  // no-back-to-back rule by seating them in consecutive chukkas.
-
-  if (myChukkas.length < cappedWanted && !player.vip) {
-    reduced.push({ player, requested: cappedWanted, given: myChukkas.length });
-  } else if (myChukkas.length < cappedWanted && player.vip) {
-    // VIP shortfall still reported but labelled distinctly in the UI
-    reduced.push({ player, requested: cappedWanted, given: myChukkas.length });
+const assignments = new Map();
+state.forEach((st) => {
+  if (st.mine.length < st.cappedWanted) {
+    reduced.push({ player: st.player, requested: st.cappedWanted, given: st.mine.length });
   }
-
-  assignments.set(player.id, myChukkas.sort((a, b) => a - b));
+  assignments.set(st.player.id, st.mine.slice());
 });
 
 // Redistribution pass — balance player counts across chukkas.
