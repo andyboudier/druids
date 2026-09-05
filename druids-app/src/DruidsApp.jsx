@@ -232,7 +232,7 @@ const defaultActiveDay = () => {
   return best;
 };
 // Arena is played 3v3 — `generate` passes a 6-slot cap when it is the ground.
-const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Arena'];
+const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Ferne', 'Stone Henge', 'Arena'];
 
 // ── Club shop (preview) ──────────────────────────────────────────────────
 // Captain-only for now. Checkout is stubbed until Stripe is wired up: each
