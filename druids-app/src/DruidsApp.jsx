@@ -6704,7 +6704,15 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                             return h * 60 + mn;
                                           };
                                           const sched = [];
-                                          (day.matches || []).forEach((match, mi) => sched.push({ kind: 'match', t: tmin(match.time), match, mi }));
+                                          (day.matches || []).forEach((match, mi) => {
+                                            sched.push({ kind: 'match', t: tmin(match.time), match, mi });
+                                            // Ticked on the match: by its own time if one was given,
+                                            // otherwise straight after the match.
+                                            if (match.prizegiving) {
+                                              const own = typeof match.prizegiving === 'string' ? tmin(match.prizegiving) : 1e9;
+                                              sched.push({ kind: 'prize', t: own !== 1e9 ? own : tmin(match.time), val: match.prizegiving, pi: 'm' + mi });
+                                            }
+                                          });
                                           [day.prizegiving, day.prizegiving2, day.prizegiving3].forEach((pg, pi) => { if (pg) sched.push({ kind: 'prize', t: tmin(typeof pg === 'string' ? pg : ''), val: pg, pi }); });
                                           sched.forEach((it, i) => { it._i = i; });
                                           sched.sort((a, b) => a.t !== b.t ? a.t - b.t : a._i - b._i);

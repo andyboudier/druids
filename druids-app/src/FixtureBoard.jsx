@@ -375,10 +375,10 @@ export default function FixtureBoard({
                     {(groundOptions || []).map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </Field>
-                <label style={S.check}>
+                <label style={S.check} title="A presentation at the end of the day, after everything else. For one that follows a particular match, tick Prize on that match instead.">
                   <input type="checkbox" checked={!!day.prizegiving}
                     onChange={e => updDay(dayIx, d => ({ ...d, prizegiving: e.target.checked }))} style={S.cbox} />
-                  Prizegiving
+                  Prizegiving at the end
                 </label>
                 <div style={{ flex: 1 }} />
                 <button onClick={() => { const ds = days.filter((_, i) => i !== dayIx); setDraft({ ...draft, days: ds }); setDayIx(0); }}
@@ -402,6 +402,25 @@ export default function FixtureBoard({
                         style={{ ...S.inpSm, width: 52, textAlign: 'center' }} />
                       <input value={m.label || ''} onChange={e => updMatch(dayIx, mi, x => ({ ...x, label: e.target.value }))}
                         placeholder="Label e.g. Final" style={{ ...S.inpSm, flex: 1, minWidth: 100, fontWeight: 600 }} />
+                      {/* Prizegiving belongs to a match, not to the day: a tournament
+                          can present after its 4 goal final and again after the 0 goal
+                          one. Tick as many matches as there are presentations.
+                          The time is optional — left blank it is presented straight
+                          after this match, which is what usually happens. */}
+                      <label style={{ ...S.check, flexShrink: 0 }} title="Prizegiving after this match"
+                        onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={!!m.prizegiving}
+                          onChange={e => updMatch(dayIx, mi, x => ({ ...x, prizegiving: e.target.checked }))}
+                          style={S.cbox} />
+                        Prize
+                      </label>
+                      {m.prizegiving ? (
+                        <input value={typeof m.prizegiving === 'string' ? m.prizegiving : ''}
+                          onChange={e => updMatch(dayIx, mi, x => ({ ...x, prizegiving: e.target.value.trim() ? e.target.value : true }))}
+                          onClick={e => e.stopPropagation()}
+                          placeholder="after" title="Prizegiving time — leave blank for straight after this match"
+                          style={{ ...S.inpSm, width: 62, textAlign: 'center', flexShrink: 0 }} />
+                      ) : null}
                       <button onClick={(e) => { e.stopPropagation(); moveMatch(dayIx, mi, -1); }} title="Move up" style={S.iconBtn}>↑</button>
                       <button onClick={(e) => { e.stopPropagation(); moveMatch(dayIx, mi, 1); }} title="Move down" style={S.iconBtn}>↓</button>
                       <button onClick={(e) => { e.stopPropagation(); duplicateMatch(dayIx, mi); }} title="Duplicate match" style={S.iconBtn}>⧉</button>

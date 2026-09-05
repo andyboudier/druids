@@ -801,7 +801,11 @@ function drawDivisionsPage(doc, fixture, day) {
   });
 
   // Prizegivings last — the draw may be TBC but the presentation time isn't.
-  [day.prizegiving, day.prizegiving2, day.prizegiving3]
+  // This sheet has no running order, so a prizegiving ticked on a match has no
+  // match to follow; it is still a presentation, so it is listed here with the
+  // day's own, by time where one was given.
+  [...(day.matches || []).map(m => m && m.prizegiving).filter(Boolean),
+   day.prizegiving, day.prizegiving2, day.prizegiving3]
     .filter(Boolean)
     .sort((a, b) => pgTime(typeof a === 'string' ? a : '') - pgTime(typeof b === 'string' ? b : ''))
     .forEach((pg) => {
@@ -889,7 +893,28 @@ function drawDayPage(doc, fixture, subtitle, day, chukkaByDow, hideChukkas) {
   // so the programme reads top-to-bottom in time order (e.g. game, prizegiving,
   // games, prizegiving) — matching the on-screen Fixtures view.
   const items = [];
-  groups.forEach((g, i) => items.push({ kind: 'group', t: pgTime(g.matches[0] && g.matches[0].time), ord: i, g }));
+  groups.forEach((g, i) => {
+    const t = pgTime(g.matches[0] && g.matches[0].time);
+    items.push({ kind: 'group', t, ord: i, g });
+    // A prizegiving ticked on a match. Given a time of its own it is placed by
+    // that time like any other item; left blank it is presented straight after
+    // the match, taking the match's time and sorting half a place behind it. A
+    // tournament can present twice in an afternoon, so every ticked match gets
+    // its own.
+    const pgMatch = g.matches.find(m => m && m.prizegiving);
+    if (pgMatch) {
+      const own = typeof pgMatch.prizegiving === 'string' ? pgTime(pgMatch.prizegiving) : 1e9;
+      const timed = own !== 1e9;
+      items.push({
+        kind: 'prize',
+        t: timed ? own : t,
+        ord: timed ? 1000 + i : i + 0.5,
+        pg: pgMatch.prizegiving,
+      });
+    }
+  });
+  // Day-level prizegivings: a presentation that follows no particular match.
+  // These carry their own time, or fall to the end of the day without one.
   [day.prizegiving, day.prizegiving2, day.prizegiving3].forEach((pg, i) => {
     if (pg) items.push({ kind: 'prize', t: pgTime(typeof pg === 'string' ? pg : ''), ord: 1000 + i, pg });
   });
