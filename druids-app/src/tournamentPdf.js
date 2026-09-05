@@ -929,7 +929,19 @@ function drawDayPage(doc, fixture, subtitle, day, chukkaByDow, hideChukkas) {
   }
   items.sort((a, b) => a.t !== b.t ? a.t - b.t : a.ord - b.ord);
 
-  const PRIZE_H = 9;
+  // A prizegiving separates one session of play from the next, and the air it
+  // was missing was all underneath: the next match's time heading landed
+  // almost on the underline while the space above was generous, because the
+  // group it follows already ends with padding of its own.
+  //
+  // So the label sits high in its block and the rest of the height goes below.
+  // This only moves the label within the block — the height is unchanged, and
+  // deliberately so. A nearly full page has next to nothing spare, and every
+  // millimetre added here comes out of the even gap between the other items,
+  // which crowds the next match's heading against the players above it.
+  const PRIZE_LEAD = 1;  // block top → label baseline
+  const PRIZE_TRAIL = 8; // label baseline → block bottom
+  const PRIZE_H = PRIZE_LEAD + PRIZE_TRAIL;
   const measureItem = (it) =>
     it.kind === 'prize' ? PRIZE_H
     : it.kind === 'chukka' ? measureChukkaTable(it.schedule)
@@ -943,8 +955,9 @@ function drawDayPage(doc, fixture, subtitle, day, chukkaByDow, hideChukkas) {
     const label = (typeof it.pg === 'string' && it.pg.trim())
       ? `${it.pg.trim()} · PRIZEGIVING`
       : 'PRIZEGIVING';
-    d.text(label, PAGE_W / 2, my + 5, { align: 'center' });
-    underlineCentered(d, label, PAGE_W / 2, my + 5);
+    const ly = my + PRIZE_LEAD;
+    d.text(label, PAGE_W / 2, ly, { align: 'center' });
+    underlineCentered(d, label, PAGE_W / 2, ly);
     return my + PRIZE_H;
   };
 
