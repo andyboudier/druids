@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 
 // ── Desktop fixture board ───────────────────────────────────────────────────
 // A three-pane workspace for building a tournament on a laptop: the fixture's
@@ -304,7 +304,7 @@ export default function FixtureBoard({
                   onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
                   onDragStart={() => { dragged.current = t; }}
                   picked={picked} setPicked={setPicked}
-                  onRename={(v) => renameTeamEverywhere(t.name, v)}
+                  onRename={(v) => { const wasOpen = openKey === norm(t.name); renameTeamEverywhere(t.name, v); if (wasOpen) setOpenKey(norm(v)); }}
                   onPlayers={(ps) => writeSquadEverywhere(t.name, ps, t.handicap)}
                   playerDb={playerDb}
                 />
@@ -321,7 +321,7 @@ export default function FixtureBoard({
                       onToggle={() => setOpenKey(openKey === norm(t.name) ? null : norm(t.name))}
                       onDragStart={() => { dragged.current = t; }}
                       picked={picked} setPicked={setPicked}
-                      onRename={(v) => renameStoredTeam(t.name, v)}
+                      onRename={(v) => { const wasOpen = openKey === norm(t.name); renameStoredTeam(t.name, v); if (wasOpen) setOpenKey(norm(v)); }}
                       onPlayers={(ps) => saveTeam({ ...t, players: ps })}
                       onDelete={deleteTeam ? () => deleteTeam(t.name) : null}
                       playerDb={playerDb}
@@ -484,12 +484,12 @@ export default function FixtureBoard({
               <Section title="Result">
                 <div style={S.two}>
                   <Field label={(selMatch.teamA || {}).name || 'Team A'} stack>
-                    <input value={selMatch.scoreA ?? ''} inputMode="numeric"
-                      onChange={e => updMatch(sel.di, sel.mi, m => ({ ...m, scoreA: e.target.value === '' ? null : Number(e.target.value) }))} style={S.inpFull} />
+                    <NumField value={selMatch.scoreA} inputMode="numeric"
+                      onCommit={(v) => updMatch(sel.di, sel.mi, m => ({ ...m, scoreA: v }))} style={S.inpFull} />
                   </Field>
                   <Field label={(selMatch.teamB || {}).name || 'Team B'} stack>
-                    <input value={selMatch.scoreB ?? ''} inputMode="numeric"
-                      onChange={e => updMatch(sel.di, sel.mi, m => ({ ...m, scoreB: e.target.value === '' ? null : Number(e.target.value) }))} style={S.inpFull} />
+                    <NumField value={selMatch.scoreB} inputMode="numeric"
+                      onCommit={(v) => updMatch(sel.di, sel.mi, m => ({ ...m, scoreB: v }))} style={S.inpFull} />
                   </Field>
                 </div>
               </Section>
@@ -540,7 +540,48 @@ export default function FixtureBoard({
 }
 
 // ── Team card in the rail ──────────────────────────────────────────────────
+// A number field that lets you type.
+//
+// The obvious `onChange={e => set(Number(e.target.value))}` fights the typist:
+// the value has to round-trip through Number() on every keystroke, and "-" is
+// not a number — so the minus sign is thrown away as fast as it is typed and a
+// handicap of -2 cannot be entered at all. A stray letter is worse: Number()
+// returns NaN and the box fills with "NaN".
+//
+// So keep whatever was typed while the field has focus, publish the parsed
+// value only when there is one, and drop back to the stored value on blur.
+function NumField({ value, onCommit, allowNegative = false, ...rest }) {
+  const [draft, setDraft] = useState(null); // null = showing the stored value
+  const stored = Number.isFinite(value) ? value : '';
+  const pattern = allowNegative ? /^-?\d{0,2}$/ : /^\d{0,3}$/;
+  return (
+    <input
+      {...rest}
+      value={draft !== null ? draft : stored}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (!pattern.test(raw)) return; // ignore anything that can never be a number
+        setDraft(raw);
+        if (raw === '' ) onCommit(null);
+        else if (raw !== '-') onCommit(Number(raw));
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
+
 function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDragStart, picked, setPicked, onRename, onPlayers, onDelete, playerDb }) {
+  // The name is edited locally and saved on blur or Enter, not on every
+  // keystroke. Renaming as you type meant the team's own name changed under it
+  // — and since the card is keyed and tracked by that name, every letter tore
+  // the card down, rebuilt it, and collapsed it. One letter per reopen.
+  const [draftName, setDraftName] = useState(team.name);
+  useEffect(() => { setDraftName(team.name); }, [team.name]);
+  const commitName = () => {
+    const next = draftName.trim();
+    if (!next || next === team.name) { setDraftName(team.name); return; }
+    onRename(next);
+  };
   const S = styles;
   const isPicked = !!picked && !picked.player && norm(picked.name) === norm(team.name);
   const inFixture = (team.slots || []).length > 0;
@@ -580,7 +621,16 @@ function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDrag
       </div>
       {open ? (
         <div style={S.teamBody} onClick={e => e.stopPropagation()}>
-          <input value={team.name} onChange={e => onRename(e.target.value)} style={{ ...S.inpFull, marginBottom: 6 }} />
+          <input
+            value={draftName}
+            onChange={e => setDraftName(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+              if (e.key === 'Escape') { setDraftName(team.name); e.currentTarget.blur(); }
+            }}
+            title="Rename the team — press Enter or tap away to save"
+            style={{ ...S.inpFull, marginBottom: 6 }} />
           <datalist id="fb-players">
             {(playerDb || []).map(p => <option key={p.id} value={p.name} />)}
           </datalist>
@@ -591,8 +641,8 @@ function TeamCard({ team, colour, teamColours, setColour, open, onToggle, onDrag
                 <span style={S.shirt}>{i + 1}</span>
                 <input list="fb-players" value={p.name || ''} onChange={e => onName(i, e.target.value)}
                   placeholder="Name" style={{ ...S.inpSm, flex: 1, minWidth: 0 }} />
-                <input value={p.handicap ?? ''} placeholder="H" title="Handicap"
-                  onChange={e => setPlayer(i, { handicap: e.target.value === '' ? null : Number(e.target.value) })}
+                <NumField value={p.handicap} onCommit={(h) => setPlayer(i, { handicap: h })}
+                  allowNegative placeholder="H" title="Handicap — a minus sign is allowed"
                   style={{ ...S.inpSm, width: 38, textAlign: 'center' }} />
               </div>
             );
