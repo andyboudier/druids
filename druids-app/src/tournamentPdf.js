@@ -456,8 +456,8 @@ function dowOfLabel(label) {
 }
 
 // Chukka draw grid colours (mirror the on-screen Table view).
-const CK_B_BG = [35, 31, 32],    CK_B_TX = [255, 255, 255]; // Black team
-const CK_W_BG = [255, 255, 255], CK_W_TX = [35, 31, 32];    // White team
+const CK_B_BG = [31, 78, 140],   CK_B_TX = [255, 255, 255]; // Blue team
+const CK_Y_BG = [242, 194, 48],  CK_Y_TX = [35, 31, 32];    // Yellow team
 const CK_LINE = [212, 200, 168];
 const CK_ALT  = [249, 245, 236];
 const fmtHcpCk = (h) => (h > 0 ? `+${h}` : `${h || 0}`);
@@ -480,7 +480,7 @@ function measureChukkaTable(schedule) {
   return 13 /* heading + ground */ + 7 /* grid header */ + rows * 5.2 + 5.5 /* footer */;
 }
 
-// Draw the chukka draw grid (players x chukka-times, B = Blue, W = White) as a
+// Draw the chukka draw grid (players x chukka-times, B = Blue, Y = Yellow) as a
 // full-width block, slotted into the day's timeline at its throw-in time.
 function drawChukkaTable(doc, schedule, startY, ground) {
   const chukkas = schedule.chukkas || [];
@@ -542,7 +542,7 @@ function drawChukkaTable(doc, schedule, startY, ground) {
       const inA = (ck.teamA || []).some((q) => q.id === p.id);
       const inB = (ck.teamB || []).some((q) => q.id === p.id);
       if (inA) cell(ckX(i), ckW, rowH, 'B', CK_B_BG, CK_B_TX, 'center', true, 8);
-      else if (inB) cell(ckX(i), ckW, rowH, 'W', CK_W_BG, CK_W_TX, 'center', true, 8);
+      else if (inB) cell(ckX(i), ckW, rowH, 'Y', CK_Y_BG, CK_Y_TX, 'center', true, 8);
       else cell(ckX(i), ckW, rowH, '', [255, 255, 255]);
     });
     y += rowH;

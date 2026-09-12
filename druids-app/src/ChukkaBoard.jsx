@@ -18,7 +18,7 @@ import React, { useState, useMemo, useRef } from 'react';
 //                 a row exposes back-to-back chukkas; reading down a column
 //                 exposes lopsided sides. Click a cell to move someone.
 //
-// teamA is Blue and teamB is White throughout, matching buildSchedule().
+// teamA is Blue and teamB is Yellow throughout, matching buildSchedule().
 
 const fmtH = (h) => (h === null || h === undefined || h === '' ? '—' : (Number(h) > 0 ? `+${h}` : String(h).replace('-', '−')));
 // <input type="time"> only accepts a zero-padded HH:MM. The app stores times
@@ -351,7 +351,7 @@ export default function ChukkaBoard({
                               style={{ ...S.sideBox, ...(side === 'A' ? S.sideA : S.sideB),
                                 ...(dropTarget === `${idx}:${side}` ? S.sideOver : null) }}>
                               <div style={S.sideHead}>
-                                <span>{side === 'A' ? 'Blue' : 'White'}</span>
+                                <span>{side === 'A' ? 'Blue' : 'Yellow'}</span>
                                 <div style={{ flex: 1 }} />
                                 <span style={S.sideSum}>{fmtH(side === 'A' ? ck.sumA : ck.sumB)} · {(side === 'A' ? ck.teamA : ck.teamB).length}</span>
                               </div>
@@ -419,9 +419,9 @@ export default function ChukkaBoard({
                                 return (
                                   <td key={ck.idx}
                                     onClick={() => setCell(idx, p.id, next)}
-                                    title={s ? `${p.name} — ${s === 'A' ? 'Blue' : 'White'}. Click to move to ${next === 'B' ? 'White' : next === 'A' ? 'Blue' : 'out'}.` : `Put ${p.name} into chukka ${ck.number} on Blue`}
+                                    title={s ? `${p.name} — ${s === 'A' ? 'Blue' : 'Yellow'}. Click to move to ${next === 'B' ? 'Yellow' : next === 'A' ? 'Blue' : 'out'}.` : `Put ${p.name} into chukka ${ck.number} on Blue`}
                                     style={{ ...S.tdCell, ...(s === 'A' ? S.cellA : s === 'B' ? S.cellB : null) }}>
-                                    {s === 'A' ? 'B' : s === 'B' ? 'W' : ''}
+                                    {s === 'A' ? 'B' : s === 'B' ? 'Y' : ''}
                                   </td>
                                 );
                               })}
@@ -453,7 +453,7 @@ export default function ChukkaBoard({
                     </table>
                   </div>
                   <p style={S.gridNote}>
-                    Click a cell to cycle Blue → White → out. Reading across a row shows whether
+                    Click a cell to cycle Blue → Yellow → out. Reading across a row shows whether
                     someone is playing back-to-back; reading down a column shows whether the sides
                     are even. <b>NC</b> marks riders who asked not to play back-to-back — a red name
                     means the draw gave them consecutive chukkas anyway.
@@ -650,7 +650,7 @@ const styles = {
   sides: { display: 'grid', gridTemplateColumns: '1fr 46px 1fr', padding: '11px 13px 4px' },
   sideBox: { border: '1px solid var(--line)', borderRadius: 8, padding: '8px 10px', minHeight: 92 },
   sideA: { background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' },
-  sideB: { background: 'var(--white-team)', borderColor: 'var(--white-team-border)' },
+  sideB: { background: 'var(--yellow-team)', borderColor: 'var(--yellow-team-border)' },
   sideOver: { boxShadow: 'inset 0 0 0 2px var(--gold-bright)' },
   sideHead: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 7 },
   sideSum: { fontSize: 11.5, fontWeight: 700, letterSpacing: 0, fontVariantNumeric: 'tabular-nums' },
@@ -679,7 +679,7 @@ const styles = {
   tdH: { textAlign: 'center', width: 38, color: 'var(--muted)', fontSize: 11.5, border: '1px solid var(--line)', fontVariantNumeric: 'tabular-nums' },
   tdCell: { textAlign: 'center', width: 52, height: 32, cursor: 'pointer', fontWeight: 700, fontSize: 11, border: '1px solid var(--line)' },
   cellA: { background: 'var(--blue)', color: '#fff' },
-  cellB: { background: 'var(--white-team)', color: 'var(--ink)', boxShadow: 'inset 0 0 0 1px var(--white-team-border)' },
+  cellB: { background: 'var(--yellow-team)', color: 'var(--ink)', boxShadow: 'inset 0 0 0 1px var(--yellow-team-border)' },
   tdFoot: { textAlign: 'center', fontSize: 11, color: 'var(--muted)', border: '1px solid var(--line)', fontVariantNumeric: 'tabular-nums' },
   tdEven: { color: '#2e6f4e' },
   tdShort: { color: 'var(--danger)', fontWeight: 700 },
