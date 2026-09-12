@@ -389,8 +389,17 @@ const TEAM_COLOURS = [
   { key: 'black',  name: 'Black',  hex: '#2a2a2a', text: '#ffffff' },
   { key: 'orange', name: 'Orange', hex: '#d1762e', text: '#ffffff' },
   { key: 'purple', name: 'Purple', hex: '#6b4a86', text: '#ffffff' },
+  // Two-colour shirts, drawn as halves — see shirtBackground().
+  { key: 'green-black', name: 'Green & Black', hex: '#3f6b47', hex2: '#2a2a2a', text: '#ffffff' },
+  { key: 'pink-green',  name: 'Pink & Green',  hex: '#d97a94', hex2: '#3f6b47', text: '#ffffff' },
+  { key: 'pink-blue',   name: 'Pink & Blue',   hex: '#d97a94', hex2: '#2f5c99', text: '#ffffff' },
 ];
 const teamColour = (key) => TEAM_COLOURS.find(c => c.key === key) || null;
+// A two-colour shirt is painted as halves. One string, so every place that
+// shows a shirt — the picker, the shirt numbers, the scoreboard — stays a
+// one-liner and a single-colour shirt is unchanged.
+const shirtBackground = (c) =>
+  c && c.hex2 ? `linear-gradient(90deg, ${c.hex} 50%, ${c.hex2} 50%)` : (c ? c.hex : 'transparent');
 const SCORE_GOLD = '#c9a24b';
 const ordinalUpper = (n) => {
   const s = ['TH', 'ST', 'ND', 'RD'], v = n % 100;
@@ -7570,7 +7579,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                         };
                         const setChukka = (v) => updLiveMatch(liveFixtureId, liveDayId, liveMatchId, m => ({ ...m, liveChukka: v }));
                         const tile = (col) => (
-                          <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: col.hex, color: col.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: '30px', border: '1px solid rgba(0,0,0,0.12)', boxShadow: '0 1px 4px rgba(0,0,0,0.12)' }}>{col.name.charAt(0)}</div>
+                          <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: shirtBackground(col), color: col.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: '30px', border: '1px solid rgba(0,0,0,0.12)', boxShadow: '0 1px 4px rgba(0,0,0,0.12)' }}>{col.name.charAt(0)}</div>
                         );
                         const status = ended
                           ? <span style={{ color: 'var(--muted)', fontSize: '12px', letterSpacing: '1.5px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '7px' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#b9b2a4' }} /> FULL TIME</span>
@@ -7684,7 +7693,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                 return (
                                   <div key={tk} style={{ flex: 1, minWidth: '200px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '8px' }}>
-                                      <span style={{ width: '14px', height: '14px', borderRadius: '4px', background: col.hex, border: '1px solid rgba(0,0,0,0.2)' }} />
+                                      <span style={{ width: '14px', height: '14px', borderRadius: '4px', background: shirtBackground(col), border: '1px solid rgba(0,0,0,0.2)' }} />
                                       <span style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--burgundy)' }}>{nm}</span>
                                       {captainMode && <span style={{ fontSize: '10px', color: 'var(--muted)', marginLeft: 'auto' }}>#&nbsp;=&nbsp;shirt no.</span>}
                                     </div>
@@ -7695,7 +7704,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                           {captainMode ? (
                                             <input value={p.shirtNo || ''} onChange={e => setPlayerShirt(liveFixtureId, liveDayId, liveMatchId, tk, pi, e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 2))} placeholder="#" maxLength={2} inputMode="numeric" style={{ width: '32px', height: '30px', textAlign: 'center', border: '1px solid var(--line)', borderRadius: '6px', fontSize: '13px', fontWeight: 700, color: 'var(--ink)', padding: 0, flexShrink: 0 }} />
                                           ) : (
-                                            (p.shirtNo != null && String(p.shirtNo) !== '') && <span style={{ width: '26px', height: '26px', flexShrink: 0, borderRadius: '6px', background: col.hex, color: col.text, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, border: '1px solid rgba(0,0,0,0.15)' }}>{p.shirtNo}</span>
+                                            (p.shirtNo != null && String(p.shirtNo) !== '') && <span style={{ width: '26px', height: '26px', flexShrink: 0, borderRadius: '6px', background: shirtBackground(col), color: col.text, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, border: '1px solid rgba(0,0,0,0.15)' }}>{p.shirtNo}</span>
                                           )}
                                           <span style={{ fontSize: '13px', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name || 'Player ' + (pi + 1)}{Number.isFinite(Number(p.handicap)) && <span style={{ color: 'var(--muted)', marginLeft: '6px', fontSize: '11px' }}>{fmtH(Number(p.handicap))}</span>}</span>
                                         </div>
@@ -7729,7 +7738,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                     <div style={{ fontSize: '10px', letterSpacing: '1px', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '5px' }}>{nm} · shirts</div>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                                       {TEAM_COLOURS.map(c => (
-                                        <button key={c.key} onClick={() => setColour(tk, c.key)} title={c.name} style={{ width: '30px', height: '30px', borderRadius: '8px', background: c.hex, cursor: 'pointer', border: sel === c.key ? '3px solid var(--burgundy)' : '1px solid rgba(0,0,0,0.15)', boxShadow: sel === c.key ? '0 0 0 1px #fff inset' : 'none' }} />
+                                        <button key={c.key} onClick={() => setColour(tk, c.key)} title={c.name} style={{ width: '30px', height: '30px', borderRadius: '8px', background: shirtBackground(c), cursor: 'pointer', border: sel === c.key ? '3px solid var(--burgundy)' : '1px solid rgba(0,0,0,0.15)', boxShadow: sel === c.key ? '0 0 0 1px #fff inset' : 'none' }} />
                                       ))}
                                     </div>
                                   </div>
