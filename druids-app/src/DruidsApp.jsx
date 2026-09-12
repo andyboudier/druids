@@ -823,7 +823,7 @@ while (safety-- > 0) {
 // player counts are odd — that is acceptable and preferred over leaving people out.
 // Build each chukka's teams while keeping every player on ONE shirt colour for
 // the whole evening, so nobody has to keep swapping bibs. A player's colour
-// (teamA = Blue, teamB = White) is fixed the first time they appear and reused
+// (teamA = Blue, teamB = Yellow) is fixed the first time they appear and reused
 // in every later chukka. Per-chukka size caps keep the teams within one player
 // of each other; a player is only moved off their colour when their side is
 // full (unavoidable for a playable game), and that becomes their colour from
@@ -832,12 +832,12 @@ const playerColor = new Map(); // id -> 'A' | 'B'
 
 // Seed the first four players (roster order) onto alternating shirt colours so
 // they're always split across the two teams, whichever chukka they're in:
-// 1st White, 2nd Blue, 3rd White, 4th Blue. (teamA = Blue = 'A', teamB = White
+// 1st Yellow, 2nd Blue, 3rd Yellow, 4th Blue. (teamA = Blue = 'A', teamB = Yellow
 // = 'B'.) They're seated before anyone else in each chukka so they keep these
 // colours; everyone else is coloured by the balancing algorithm below.
 const fixedColorIds = new Set();
 players.slice(0, 4).forEach((p, i) => {
-  playerColor.set(p.id, i % 2 === 0 ? 'B' : 'A'); // even index → White(B), odd → Blue(A)
+  playerColor.set(p.id, i % 2 === 0 ? 'B' : 'A'); // even index → Yellow(B), odd → Blue(A)
   fixedColorIds.add(p.id);
 });
 
@@ -2545,7 +2545,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
   // Put a rider on a given side of a given chukka, or take them out (side =
   // null). One primitive covering every cell of the desktop player grid, where
-  // a click cycles Blue → White → out; the phone's swap/remove/add buttons stay
+  // a click cycles Blue → Yellow → out; the phone's swap/remove/add buttons stay
   // as they are. Like every other draw edit it routes through updateSchedule,
   // so sums refresh and a published draw un-publishes.
   const setChukkaCell = (chukkaIdx, playerId, side) => {
@@ -2618,7 +2618,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         text += `🔵 ${ck.teamA.map(p => `${p.name} (${fmtH(p.handicap)})`).join(', ')}\n`;
       }
       if (ck.teamB.length > 0) {
-        text += `⚪ ${ck.teamB.map(p => `${p.name} (${fmtH(p.handicap)})`).join(', ')}\n`;
+        text += `🟡 ${ck.teamB.map(p => `${p.name} (${fmtH(p.handicap)})`).join(', ')}\n`;
       }
       if (ck.playerCount === 0) text += `_no players_\n`;
       text += '\n';
@@ -2762,8 +2762,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     const headerTime = `style="background-color:#EFEDE8; color:#231F20; font-weight:600; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:12px; mso-number-format:'\\@';"`;
     const headerCol = `style="background-color:#231F20; color:#FAF9F7; font-weight:500; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:11px;"`;
     const headerChukka = `style="background-color:#EFEDE8; color:#231F20; font-weight:500; text-align:center; padding:8px; border:1px solid #DEDAD3; font-size:11px;"`;
-    const cellB = `style="background-color:#231F20; color:#FFFFFF; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
-    const cellW = `style="background-color:#FFFFFF; color:#231F20; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
+    const cellB = `style="background-color:#1F4E8C; color:#FFFFFF; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
+    const cellY = `style="background-color:#F2C230; color:#231F20; font-weight:700; text-align:center; padding:8px; font-family:Georgia,serif; border:1px solid #DEDAD3; font-size:14px;"`;
     const cellEmpty = `style="background-color:#ffffff; padding:8px; border:1px solid #DEDAD3;"`;
 
     let html = '';
@@ -2804,7 +2804,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         const inA = ck.teamA.find(x => x.id === p.id);
         const inB = ck.teamB.find(x => x.id === p.id);
         if (inA) html += `<td ${cellB}>B</td>`;
-        else if (inB) html += `<td ${cellW}>W</td>`;
+        else if (inB) html += `<td ${cellY}>Y</td>`;
         else html += `<td ${cellEmpty}></td>`;
       });
       html += `</tr>`;
@@ -3937,10 +3937,13 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           --muted: #6B6663;
           --line: #DEDAD3;
           --danger: #B3261E;
-          --blue: #111010;
-          --blue-deep: #000000;
-          --white-team: #ffffff;
-          --white-team-border: #C9910F;
+          /* Chukka shirts: the club plays blue v yellow, marked B and Y on the
+             chukka sheet. Tournament teams pick their own colours elsewhere. */
+          --blue: #1F4E8C;
+          --blue-deep: #143561;
+          --yellow-team: #F2C230;
+          --yellow-team-border: #C9910F;
+          --yellow-deep: #8A6508;
           --wa: #25D366;
           --wa-deep: #128C7E;
           font-family: 'Outfit', system-ui, sans-serif;
@@ -4411,10 +4414,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           justify-content: center;
           flex-shrink: 0;
         }
-        .team-mini-row.white .hcp {
-          background: var(--white-team);
+        .team-mini-row.yellow .hcp {
+          background: var(--yellow-team);
           color: var(--ink);
-          border: 1.5px solid var(--blue);
+          border: 1.5px solid var(--yellow-team-border);
           width: 22px;
           height: 22px;
         }
@@ -4748,14 +4751,14 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           color: var(--ink);
         }
         .captain-table .blue-cell {
-          background: rgba(42, 74, 110, 0.12);
+          background: rgba(31, 78, 140, 0.16);
           color: var(--blue-deep);
           font-weight: 700;
           font-family: 'Fraunces', serif;
         }
-        .captain-table .white-cell {
-          background: rgba(251, 180, 21, 0.10);
-          color: var(--burgundy);
+        .captain-table .yellow-cell {
+          background: rgba(242, 194, 48, 0.38);
+          color: var(--yellow-deep);
           font-weight: 700;
           font-family: 'Fraunces', serif;
         }
@@ -6296,9 +6299,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                               {ck.teamA.map(p => renderPlayer(p, ''))}
                             </div>
                             <div className="chukka-team">
-                              <div className="team-mini-label">White</div>
-                              <div className="team-mini-total" style={{ color: 'var(--muted)' }}>HCP {ck.sumB}</div>
-                              {ck.teamB.map(p => renderPlayer(p, 'white'))}
+                              <div className="team-mini-label">Yellow</div>
+                              <div className="team-mini-total" style={{ color: 'var(--yellow-deep)' }}>HCP {ck.sumB}</div>
+                              {ck.teamB.map(p => renderPlayer(p, 'yellow'))}
                             </div>
 
                             {activeP && captainMode && (
@@ -6400,10 +6403,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                 {schedule.chukkas.map(ck => {
                                   const inA = ck.teamA.find(x => x.id === p.id);
                                   const inB = ck.teamB.find(x => x.id === p.id);
-                                  const cls = inA ? 'blue-cell' : inB ? 'white-cell' : 'empty-cell';
+                                  const cls = inA ? 'blue-cell' : inB ? 'yellow-cell' : 'empty-cell';
                                   return (
                                     <td key={ck.idx} className={cls}>
-                                      {inA ? 'B' : inB ? 'W' : ''}
+                                      {inA ? 'B' : inB ? 'Y' : ''}
                                     </td>
                                   );
                                 })}
