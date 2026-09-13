@@ -6,6 +6,7 @@ import {
 import { DEFAULT_COMMITTEE, teamHandicap } from './pdfShared';
 import { headStartFor, headStartGoals, matchChukkas, isArenaGround, normaliseHandicapRules } from './handicap';
 import { startLiveScore, updateLiveScore, endLiveScore } from './liveScoreActivity';
+import { parseGroundPin, shortLink, directionsUrl, placeUrl, pinKey, pinFrom, formatPin, currentPin } from './groundPins';
 import {
   trophyKeyFor, loadTrophyIndex, loadTrophyImage, saveTrophyImage,
   deleteTrophyImage, prepareTrophyImage,
@@ -888,6 +889,107 @@ rebalanceChukkaTeams(chukkas);
 return { chukkas, numChukkas, totalSlots: totalRequested, unplaced: [], capped, reduced };
 }
 
+// Setting where a ground is: stand on it and tap, or paste the link from
+// Google Maps. No embedded map, and so no API key or billing — see
+// groundPins.js for why.
+function GroundPinEditor({ state, setState, groundOptions, existing, pinnedCount, onSave }) {
+  const set = (patch) => setState((prev) => (prev ? { ...prev, ...patch } : prev));
+  const S = {
+    wrap: { margin: '10px auto 0', maxWidth: '420px', textAlign: 'left', padding: '12px 14px', background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '6px' },
+    row: { display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' },
+    hint: { fontSize: '11px', color: 'var(--muted)', lineHeight: 1.5 },
+    btn: { background: 'transparent', border: '1px solid var(--line)', color: 'var(--ink)', borderRadius: '4px', padding: '8px 12px', fontSize: '12px', cursor: 'pointer' },
+    err: { fontSize: '12px', color: 'var(--danger)', marginTop: '8px', lineHeight: 1.45 },
+    ok: { fontSize: '12px', color: 'var(--burgundy)', marginTop: '8px', lineHeight: 1.45 },
+    link: { color: 'var(--burgundy)', textDecoration: 'underline', textUnderlineOffset: '3px' },
+  };
+
+  const here = async () => {
+    set({ busy: true, error: '', note: '' });
+    try {
+      const pin = await currentPin();
+      await onSave(pin);
+      set({ busy: false, draft: '', note: `Pinned where you are now${pin.accuracy ? `, to about ${pin.accuracy} m` : ''}.` });
+    } catch (e) {
+      set({ busy: false, error: e.message || 'Could not work out where you are.' });
+    }
+  };
+
+  const fromText = async () => {
+    const raw = (state.draft || '').trim();
+    const pin = parseGroundPin(raw);
+    if (!pin) {
+      set({ error: shortLink(raw)
+        ? 'That is a shortened Google link, which does not say where it points. Open it, then copy the address from the browser bar.'
+        : 'That did not look like a location. Paste a Google Maps link, or coordinates like 51.234, -1.678.' });
+      return;
+    }
+    set({ busy: true, error: '', note: '' });
+    await onSave(pin);
+    set({ busy: false, draft: '', note: 'Saved. Check it with the link below.' });
+  };
+
+  return (
+    <div style={S.wrap}>
+      <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '6px' }}>
+        Where the grounds are{typeof pinnedCount === 'number' ? ` · ${pinnedCount} of ${(groundOptions || []).length} pinned` : ''}
+      </div>
+      <div style={S.hint}>
+        Members get a 📍 next to the ground that opens directions, and the link rides along in the WhatsApp message.
+        A ground is pinned once, by name, wherever it is played on.
+      </div>
+      <div style={S.row}>
+        <select
+          className="input-field select-field"
+          aria-label="Ground to pin"
+          value={state.ground}
+          onChange={(e) => set({ ground: e.target.value, draft: '', error: '', note: '' })}
+          style={{ flex: '1 1 160px', padding: '9px 8px', fontSize: '13px' }}
+        >
+          {(groundOptions || []).map((g) => <option key={g} value={g}>{g}</option>)}
+        </select>
+      </div>
+
+      {existing && (
+        <div style={{ ...S.hint, marginTop: '8px', color: 'var(--ink)' }}>
+          Pinned at {formatPin(existing)} · <a href={placeUrl(existing)} target="_blank" rel="noopener noreferrer" style={S.link}>see it on the map</a>
+        </div>
+      )}
+
+      <div style={S.row}>
+        <button type="button" style={S.btn} disabled={state.busy} onClick={here}>
+          {state.busy ? 'Finding you…' : '📍 Pin where I am'}
+        </button>
+        {existing && (
+          <button type="button" style={{ ...S.btn, borderColor: 'var(--danger)', color: 'var(--danger)' }} disabled={state.busy}
+            onClick={async () => { await onSave(null); set({ note: 'Location removed.', error: '' }); }}>
+            Remove
+          </button>
+        )}
+      </div>
+
+      <div style={{ ...S.hint, marginTop: '10px' }}>
+        Or, from Google Maps: hold down on the spot, tap Share, and paste the link here.
+      </div>
+      <div style={S.row}>
+        <input
+          className="input-field"
+          type="text"
+          value={state.draft || ''}
+          onChange={(e) => set({ draft: e.target.value, error: '' })}
+          onKeyDown={(e) => { if (e.key === 'Enter') fromText(); }}
+          placeholder="Paste a maps link, or 51.234, -1.678"
+          style={{ flex: '1 1 200px', padding: '9px 11px', fontSize: '13px' }}
+        />
+        <button type="button" style={S.btn} disabled={state.busy || !(state.draft || '').trim()} onClick={fromText}>Save</button>
+      </div>
+
+      {state.error && <div style={S.err}>{state.error}</div>}
+      {state.note && !state.error && <div style={S.ok}>{state.note}</div>}
+    </div>
+  );
+}
+
 export default function DruidsApp() {
   // Restore where the user last was so a refresh doesn't bounce them home.
   // Read once on mount (null if absent or older than the max age).
@@ -922,6 +1024,10 @@ export default function DruidsApp() {
   // Which ground each day's chukkas are played on — captain-selectable from
   // GROUND_OPTIONS, persisted per day, shown on the chukka table and exports.
   const [grounds, setGrounds] = useState(() => Object.fromEntries(DAY_KEYS.map(k => [k, ''])));
+  // Where each ground is, keyed by its name, so a pin set once serves every
+  // day and every fixture that names it. Captain-set; see groundPins.js.
+  const [groundPins, setGroundPins] = useState({});
+  const [pinEditor, setPinEditor] = useState(null); // null | { ground, draft, busy, error, note }
   // Captain can manually close sign-ups for a day (e.g. when it's full), on top
   // of the automatic time-based cutoff. Persisted per day and synced.
   const [manualClosed, setManualClosed] = useState(() => Object.fromEntries(DAY_KEYS.map(k => [k, false])));
@@ -1667,7 +1773,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       const one = (key) => window.storage.get(key, true).catch(() => null);
       const [w, cm, m, p, s, t] = await Promise.all([
         one('wa-link'), one('committee'), one('members'),
-        one('players'), one('subsidies'), one('transactions'),
+        one('players'), one('subsidies'), one('transactions'), one('ground-pins'),
       ]);
       try {
         if (w?.value) setWaLink(w.value);
@@ -1798,6 +1904,21 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const applyGround = async (val, dayKey = activeDay) => {
     setGrounds(prev => ({ ...prev, [dayKey]: val }));
     try { await window.storage.set(storageKey('ground', dayKey), val, true); } catch (err) {}
+  };
+
+  // --- Where the grounds are (see groundPins.js) ---
+  // One shared document for the whole club, keyed by ground name, so the pin
+  // follows the name wherever it is used rather than being set per day.
+  const pinOf = (name) => pinFrom(groundPins, name);
+  const saveGroundPin = async (name, pin) => {
+    const k = pinKey(name);
+    if (!k) return;
+    const next = { ...groundPins };
+    if (pin) next[k] = { lat: pin.lat, lng: pin.lng, name: String(name).trim(), setAt: Date.now() };
+    else delete next[k];
+    setGroundPins(next);
+    try { await window.storage.set('ground-pins', JSON.stringify(next), true); }
+    catch (err) { setPinEditor(pe => (pe ? { ...pe, error: 'Saved on this device only — check your connection.' } : pe)); }
   };
 
   // Captain's manual "we're full" switch, on top of the automatic 24-hour cutoff.
@@ -2606,7 +2727,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     let text = `*Druids Lodge Polo Club*\n`;
     text += `_${activeDayConfig.fullLabel} Chukkas — ${dateStr}_\n`;
     text += `🐎 ${schedule.numChukkas} chukkas, ${chukkaTime(0, throwInMin)} throw-in\n`;
-    if (ground) text += `📍 ${ground}\n`;
+    if (ground) text += `📍 ${ground}${pinOf(ground) ? ` — ${placeUrl(pinOf(ground))}` : ''}\n`;
     text += `\n`;
 
     schedule.chukkas.forEach(ck => {
@@ -2665,7 +2786,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
     let text = `*Druids Lodge Polo Club*\n`;
     text += `_${activeDayConfig.fullLabel} Chukkas — ${dateStr}_\n`;
-    if (ground) text += `📍 ${ground}\n`;
+    if (ground) text += `📍 ${ground}${pinOf(ground) ? ` — ${placeUrl(pinOf(ground))}` : ''}\n`;
     text += `🐎 Chukkas: ${times}\n\n`;
     text += '```\n';
     text += header + '\n';
@@ -3902,6 +4023,24 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           )}
         </div>
       </div>
+    );
+  };
+
+  // "Perham Down 📍" — the pin only appears once someone has set one, so a
+  // ground with no location reads exactly as it did before.
+  const GroundPin = ({ name, style }) => {
+    const pin = pinOf(name);
+    if (!pin) return null;
+    return (
+      <a
+        href={directionsUrl(pin)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        title={`Directions to ${String(name).trim()}`}
+        aria-label={`Directions to ${String(name).trim()}`}
+        style={{ marginLeft: '5px', textDecoration: 'none', ...(style || {}) }}
+      >📍</a>
     );
   };
 
@@ -5346,8 +5485,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                 <div className="label-eyebrow">
                   {activeDayConfig.note
-                    ? <>{activeDayConfig.fullLabel} · {activeDayConfig.note} · {fmtTime(throwInMin)}{ground ? <> · {ground}</> : null}</>
-                    : <>{activeDayConfig.fullLabel}s · {fmtTime(throwInMin)}{ground ? <> · {ground}</> : null}</>
+                    ? <>{activeDayConfig.fullLabel} · {activeDayConfig.note} · {fmtTime(throwInMin)}{ground ? <> · {ground}<GroundPin name={ground} /></> : null}</>
+                    : <>{activeDayConfig.fullLabel}s · {fmtTime(throwInMin)}{ground ? <> · {ground}<GroundPin name={ground} /></> : null}</>
                   }
                   {captainMode && !throwInEditing && (
                     <button
@@ -5451,7 +5590,25 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                       <option value="">— not set —</option>
                       {GROUND_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
                     </select>
+                    <button
+                      type="button"
+                      onClick={() => setPinEditor(pinEditor
+                        ? null
+                        : { ground: ground || GROUND_OPTIONS[0], draft: '', busy: false, error: '', note: '' })}
+                      title="Where the grounds are"
+                      style={{ background: 'transparent', border: '1px solid var(--line)', borderRadius: '4px', padding: '5px 9px', fontSize: '12px', cursor: 'pointer', color: 'var(--muted)' }}
+                    >📍 Locations</button>
                   </div>
+                )}
+                {captainMode && pinEditor && (
+                  <GroundPinEditor
+                    state={pinEditor}
+                    setState={setPinEditor}
+                    groundOptions={GROUND_OPTIONS}
+                    existing={pinOf(pinEditor.ground)}
+                    pinnedCount={GROUND_OPTIONS.filter(g => pinOf(g)).length}
+                    onSave={(pin) => saveGroundPin(pinEditor.ground, pin)}
+                  />
                 )}
                 {captainMode && (
                   <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
@@ -6183,7 +6340,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                       {chukkaTime(0, throwInMin)} — {chukkaTime(schedule.numChukkas - 1, throwInMin)}
                       {' · '}
                       {schedule.totalSlots} player-slots
-                      {ground ? <>{' · '}{ground}</> : null}
+                      {ground ? <>{' · '}{ground}<GroundPin name={ground} /></> : null}
                     </div>
                   </div>
 
@@ -6703,7 +6860,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                       <div key={di} style={{ marginBottom: '18px' }}>
                                         <div style={{ textAlign: 'center', marginBottom: '10px' }}>
                                           <div style={{ fontWeight: 700, fontSize: '13px', letterSpacing: '1.5px', textTransform: 'uppercase', color: 'var(--ink)', marginBottom: '2px' }}>{day.dateLabel}</div>
-                                          {day.ground && <div style={{ fontSize: '12px', letterSpacing: '1.5px', textTransform: 'uppercase', color: 'var(--muted)' }}>{day.ground}</div>}
+                                          {day.ground && <div style={{ fontSize: '12px', letterSpacing: '1.5px', textTransform: 'uppercase', color: 'var(--muted)' }}>{day.ground}<GroundPin name={day.ground} /></div>}
                                         </div>
                                         {(() => {
                                           const tmin = (raw) => {
