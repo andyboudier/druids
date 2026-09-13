@@ -1782,7 +1782,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       // document and no live listener, so before negative caching it was a
       // guaranteed server round-trip on every single load.
       const one = (key) => window.storage.get(key, true).catch(() => null);
-      const [w, cm, m, p, s, t] = await Promise.all([
+      const [w, cm, m, p, s, t, gp] = await Promise.all([
         one('wa-link'), one('committee'), one('members'),
         one('players'), one('subsidies'), one('transactions'), one('ground-pins'),
       ]);
@@ -1803,6 +1803,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       } catch (e) {}
       try {
         if (t?.value) { const arr = JSON.parse(t.value); if (Array.isArray(arr)) setTransactions(arr); }
+      } catch (e) {}
+      try {
+        if (gp?.value) { const o = JSON.parse(gp.value); if (o && typeof o === 'object') setGroundPins(o); }
       } catch (e) {}
       setLoaded(true);
       // Belt and braces: if an early return or a throw ever skips the call made
