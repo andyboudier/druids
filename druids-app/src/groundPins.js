@@ -85,6 +85,23 @@ export const pinFrom = (pins, ground) => {
   return p && sane(p.lat, p.lng) ? p : null;
 };
 
+// The club's own grounds, where we know them, so nobody has to pin the
+// regular fields by hand. A pin the club sets in the app wins over these,
+// and taking that one off falls back to the built-in rather than to nothing.
+export const pinOr = (stored, defaults, ground) => pinFrom(stored, ground) || pinFrom(defaults, ground);
+
+// Turn a plain { 'Perham Down': { lat, lng } } list into the keyed shape the
+// rest of this module expects, so an app can write its grounds out readably.
+export const builtInPins = (byName) => {
+  const out = {};
+  Object.keys(byName || {}).forEach((name) => {
+    const p = byName[name];
+    const k = pinKey(name);
+    if (k && p && sane(p.lat, p.lng)) out[k] = { lat: round(p.lat), lng: round(p.lng), name: String(name).trim(), builtIn: true };
+  });
+  return out;
+};
+
 // The phone's own idea of where it is — the captain standing on the ground.
 export function currentPin() {
   return new Promise((resolve, reject) => {
