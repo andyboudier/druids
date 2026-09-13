@@ -161,16 +161,128 @@ final class ChukkaStore: ObservableObject {
     }
 }
 
+// MARK: - Club notice
+
+/// The captain's notice, read from the same `shared/notice` document the web
+/// app writes. No push involved: the Watch already talks to Firestore, so the
+/// notice arrives on the next refresh like the roster does.
+///
+/// Two levels, as on the phone. `important` is loud and cannot be missed;
+/// `normal` is a quiet strip. Neither is dismissible here — a wrist is glanced
+/// at and dropped, so a banner costs nothing between glances, and a captain
+/// takes it down centrally when it stops being true.
+struct Notice {
+    let text: String
+    let isImportant: Bool
+    let until: Double   // milliseconds since epoch; 0 means "until taken down"
+
+    var isLive: Bool { until <= 0 || Date().timeIntervalSince1970 * 1000 < until }
+}
+
+@MainActor
+final class NoticeStore: ObservableObject {
+    @Published var notice: Notice?
+
+    func load() { Task { await fetch() } }
+
+    private func fetch() async {
+        // A missing document, a dead connection and a malformed notice all mean
+        // the same thing here: show nothing.
+        let raw: Any? = (try? await fetchSharedJSON(key: "notice")) ?? nil
+        guard let object = raw as? [String: Any],
+              let stored = object["text"] as? String else {
+            notice = nil
+            return
+        }
+        let text = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            notice = nil
+            return
+        }
+        let candidate = Notice(
+            text: text,
+            isImportant: (object["level"] as? String) == "important",
+            until: (object["until"] as? Double) ?? 0)
+        notice = candidate.isLive ? candidate : nil
+    }
+}
+
+/// Two lines at most on the wrist; the whole thing on a tap.
+struct NoticeBanner: View {
+    let notice: Notice
+    @State private var showingFull = false
+
+    private let danger = Color(red: 0.702, green: 0.149, blue: 0.118)  // #B3261E
+    private let accent = Color(red: 0.984, green: 0.706, blue: 0.082)  // #FBB415
+
+    var body: some View {
+        Button {
+            showingFull = true
+        } label: {
+            HStack(alignment: .top, spacing: 4) {
+                Text(notice.isImportant ? "\u{26A0}\u{FE0F}" : "\u{1F4E3}")
+                    .font(.system(size: 11))
+                Text(notice.text)
+                    .font(.system(size: 11, weight: notice.isImportant ? .semibold : .regular))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 7)
+        }
+        .buttonStyle(.plain)
+        .background(notice.isImportant ? danger : Color.gray.opacity(0.22))
+        .foregroundColor(notice.isImportant ? .white : .primary)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .frame(width: 3)
+                .foregroundColor(notice.isImportant ? Color.white.opacity(0.65) : accent)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 4)
+        .sheet(isPresented: $showingFull) {
+            NoticeDetail(notice: notice)
+        }
+    }
+}
+
+struct NoticeDetail: View {
+    let notice: Notice
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(notice.isImportant ? "IMPORTANT" : "CLUB NOTICE")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.secondary)
+                Text(notice.text)
+                    .font(.system(size: 14))
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
+        }
+    }
+}
+
 // MARK: - Root view (Chukkas | Live)
 
 enum AppTab { case chukkas, live }
 
 struct ContentView: View {
     @State private var tab: AppTab = .chukkas
+    @StateObject private var notices = NoticeStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 5) {
+                // Above the tabs, so a notice is on whichever screen you land on.
+                if let notice = notices.notice {
+                    NoticeBanner(notice: notice)
+                }
                 TopTabs(selection: $tab)
                 switch tab {
                 case .chukkas: ChukkasScreen()
@@ -178,6 +290,9 @@ struct ContentView: View {
                 }
             }
             .navigationTitle(tab == .live ? "Live" : "Chukkas")
+            .onChange(of: scenePhase, initial: true) {
+                if scenePhase == .active { notices.load() }
+            }
         }
     }
 }
