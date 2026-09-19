@@ -246,7 +246,7 @@ const defaultActiveDay = () => {
   return best;
 };
 // Arena is played 3v3 — `generate` passes a 6-slot cap when it is the ground.
-const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Ferne', 'Stone Henge', 'Arena'];
+const GROUND_OPTIONS = ['Main Ground', 'Second Ground', 'Ferne', 'Stone Henge', 'Reservoir', 'Arena'];
 
 // Where the club's own grounds are. These ship with the app so a member gets
 // directions from the first day, without anyone having to stand on each field
