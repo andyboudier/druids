@@ -9,6 +9,8 @@ import { startLiveScore, updateLiveScore, endLiveScore } from './liveScoreActivi
 import { parseGroundPin, shortLink, directionsUrl, placeUrl, pinKey, pinFrom, pinOr, builtInPins, formatPin, currentPin } from './groundPins';
 import NoticeBanner from './NoticeBanner';
 import { parseNotice } from './notices';
+import LessonsBoard from './LessonsBoard';
+import { normaliseSlots, removeBooking as removeLessonBooking, addBooking as addLessonBooking, tokenCost } from './lessons';
 import {
   trophyKeyFor, loadTrophyIndex, loadTrophyImage, saveTrophyImage,
   deleteTrophyImage, prepareTrophyImage,
@@ -127,6 +129,15 @@ const LESSON_TYPES_2026 = [
   { id: 'inst-chukka-own', label: 'Instructional Chukka · Own Pony',       std: 75,  student: 64.50 },
   { id: 'alumni-chukka',   label: 'Alumni Instructional Chukka',           std: 80,  student: 80 },
 ];
+// Which of this club's coaching rates a booked lesson slot is charged at.
+// Club-specific on purpose: the cards differ in both ids and shape, so a
+// shared mapping would quietly bill the wrong lesson. Lengths absent here are
+// not offered for booking at all — see lessons.js.
+const LESSON_SLOT_RATES = {
+  individual: { 1: 'lesson-1hr' },
+  group:      { 1: 'semi-private' },
+};
+
 const lessonById = (id) => LESSON_TYPES_2026.find(l => l.id === id) || LESSON_TYPES_2026[0];
 
 // 2026 tournament team entry fees (per team) and the per-player league fee.
@@ -1044,6 +1055,9 @@ export default function DruidsApp() {
   // The club notice under the tab bar — one message, normal or important.
   // See notices.js.
   const [notice, setNotice] = useState(null);
+  // Coaching windows and their bookings — see lessons.js. Captain-only for
+  // now; the tab is gated below.
+  const [lessonSlots, setLessonSlots] = useState([]);
   // Captain can manually close sign-ups for a day (e.g. when it's full), on top
   // of the automatic time-based cutoff. Persisted per day and synced.
   const [manualClosed, setManualClosed] = useState(() => Object.fromEntries(DAY_KEYS.map(k => [k, false])));
@@ -1787,10 +1801,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       // document and no live listener, so before negative caching it was a
       // guaranteed server round-trip on every single load.
       const one = (key) => window.storage.get(key, true).catch(() => null);
-      const [w, cm, m, p, s, t, gp, nt] = await Promise.all([
+      const [w, cm, m, p, s, t, gp, nt, ls] = await Promise.all([
         one('wa-link'), one('committee'), one('members'),
         one('players'), one('subsidies'), one('transactions'), one('ground-pins'),
-        one('notice'),
+        one('notice'), one('lesson-slots'),
       ]);
       try {
         if (w?.value) setWaLink(w.value);
@@ -1815,6 +1829,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       } catch (e) {}
       // parseNotice copes with an empty, stale or malformed document itself.
       setNotice(parseNotice(nt?.value));
+      // normaliseSlots drops anything malformed rather than crashing the board.
+      setLessonSlots(normaliseSlots(ls?.value));
       setLoaded(true);
       // Belt and braces: if an early return or a throw ever skips the call made
       // after the per-day reads, the crest must still come down.
@@ -1962,6 +1978,93 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     catch (err) { setError('Notice taken down on this device only — check your connection.'); }
   };
 
+  // --- Lessons (see lessons.js) ---
+  // One shared document of coaching windows. The board owns the diary; the
+  // money and the tokens stay here, where the rates, the military flag and
+  // the subsidy pots already live.
+  const saveLessonSlots = async (next) => {
+    setLessonSlots(next);
+    try { await window.storage.set('lesson-slots', JSON.stringify(next), true); }
+    catch (err) { setError('Lessons saved on this device only — check your connection.'); }
+  };
+
+  const tokensOf = (player) => Math.max(0, Number(player && player.tokens) || 0);
+
+  // What a lesson costs, with and without a pony. Pony hire is charged per
+  // hour, as it is per chukka elsewhere: a lesson needs a fresh pony the same
+  // way a chukka does. Subsidy pots come off the coaching, not the pony.
+  const quoteLesson = (player, type, hours, ponyHire, ponyLevel) => {
+    const h = Math.max(1, Number(hours) || 1);
+    const rateId = (LESSON_SLOT_RATES[type] || LESSON_SLOT_RATES.individual)[h];
+    if (!rateId) return { blocked: `No ${h}-hour ${type} rate.`, money: '—', total: 0, detail: '' };
+    const lt = lessonById(rateId);
+    const priced = player ? priceLesson(player, lt.id) : { lessonLabel: lt.label, base: lt.civ, subsidyDeductions: [], total: lt.civ };
+    const level = ponyLevel || 'club';
+    const pony = ponyHire ? (PONY_HIRE_2026[level] != null ? PONY_HIRE_2026[level] : PONY_HIRE_2026.club) * h : 0;
+    const total = Math.max(0, priced.total + pony);
+    const bits = [`${lt.label} £${fmtMoney(priced.base)}`];
+    if (pony) bits.push(`pony hire £${fmtMoney(pony)} (${h} hr)`);
+    (priced.subsidyDeductions || []).filter(d => d.amount > 0).forEach(d => bits.push(`${d.name} −£${fmtMoney(d.amount)}`));
+    return { lessonId: lt.id, lessonLabel: lt.label, base: priced.base, pony,
+             subsidyDeductions: priced.subsidyDeductions || [], total,
+             money: fmtMoney(total), detail: bits.join(' · ') };
+  };
+
+  // Book a lesson. Tokens first where the player has enough, otherwise the
+  // cash price goes on their invoice — the same 'due' transaction the
+  // Payments tab already settles, so Stripe later has one thing to pay off.
+  const bookLesson = async ({ slot, session, player, ponyHire }) => {
+    const hours = Math.max(1, Number(session.hours) || 1);
+    const bd = quoteLesson(player, session.type, hours, ponyHire);
+    const cost = tokenCost(hours);
+    const have = tokensOf(player);
+    const byToken = have >= cost;
+    let txId = '';
+    if (!byToken) {
+      txId = `tx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const dueTx = {
+        id: txId, date: Date.now(), kind: 'lesson', playerId: player.id, playerName: player.name, day: null,
+        lessonId: bd.lessonId, lessonLabel: bd.lessonLabel, base: bd.base, militaryRate: !!player.military,
+        ponyHire: bd.pony,
+        subsidyDeductions: (bd.subsidyDeductions || []).filter(d => d.amount > 0).map(d => ({ id: d.id, name: d.name, amount: d.amount })),
+        total: bd.total, status: 'due', method: '', note: `Lesson ${slot.date} ${session.start}`,
+      };
+      const nextTx = [dueTx, ...transactions];
+      setTransactions(nextTx);
+      try { await window.storage.set('transactions', JSON.stringify(nextTx), true); } catch (e) {}
+    }
+    const res = addLessonBooking(slot, {
+      playerId: player.id, name: player.name, start: session.start, hours,
+      type: session.type, ponyHire: !!ponyHire,
+      paid: byToken ? 'token' : 'invoice', tokensSpent: byToken ? cost : 0, txId,
+      uid: '', bookedBy: '',
+    }, LESSON_SLOT_RATES);
+    if (!res.ok) return { error: res.error };
+    await saveLessonSlots(lessonSlots.map(s => (s.id === slot.id ? res.slot : s)));
+    if (byToken) await savePlayerDb(playerDb.map(p => (p.id === player.id ? { ...p, tokens: have - cost } : p)));
+    return { message: byToken
+      ? `Booked for ${player.name} — ${cost} token${cost === 1 ? '' : 's'} used, ${have - cost} left.`
+      : `Booked for ${player.name} — £${bd.money} added to their invoices.` };
+  };
+
+  // Cancelling puts back whatever was taken: the token, or the unpaid
+  // invoice. An invoice already settled is left alone — that is a refund,
+  // and a refund is the captain's decision, not the app's.
+  const cancelLessonBooking = async (slot, booking) => {
+    await saveLessonSlots(lessonSlots.map(s => (s.id === slot.id ? removeLessonBooking(s, booking.id) : s)));
+    if (booking.paid === 'token' && booking.playerId) {
+      const back = Number(booking.tokensSpent) || tokenCost(booking.hours);
+      await savePlayerDb(playerDb.map(p => (p.id === booking.playerId ? { ...p, tokens: tokensOf(p) + back } : p)));
+    } else if (booking.paid === 'invoice' && booking.txId) {
+      const tx = transactions.find(t => t.id === booking.txId);
+      if (tx && tx.status === 'due') {
+        const nextTx = transactions.filter(t => t.id !== booking.txId);
+        setTransactions(nextTx);
+        try { await window.storage.set('transactions', JSON.stringify(nextTx), true); } catch (e) {}
+      }
+    }
+  };
+
   // Captain's manual "we're full" switch, on top of the automatic 24-hour cutoff.
   const toggleManualClosed = async (dayKey = activeDay) => {
     const val = !manualClosed[dayKey];
@@ -2040,6 +2143,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     id: '', name: '', handicap: '', email: '', mobile: '',
     type: 'Member', membership: 'none', student: false, unit: '', active: true,
     subsidies: [], notes: '',
+    // Lesson tokens: one buys an hour of coaching. A stand-in until Stripe,
+    // so deliberately a plain count rather than a rate card — see lessons.js.
+    tokens: 0,
   });
   const newPlayerId = (salt = '') => `p-${Date.now()}-${salt}${Math.random().toString(36).slice(2, 7)}`;
   const savePlayerDb = async (next) => {
@@ -2070,6 +2176,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       active: draft.active !== false,
       subsidies: Array.isArray(draft.subsidies) ? draft.subsidies : [],
       notes: (draft.notes || '').trim(),
+      // Lesson tokens. The record is an explicit whitelist, so a field that
+      // is not named here is dropped on every save — as this one was.
+      tokens: Math.max(0, parseInt(draft.tokens, 10) || 0),
       updatedAt: Date.now(),
     };
     const exists = playerDb.some(p => p.id === record.id);
@@ -5493,6 +5602,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               Teams
             </button>
           )}
+          {captainMode && (
+            <button className={`tab-btn ${activeTab === 'lessons' ? 'active' : ''}`} onClick={() => setActiveTab('lessons')}>
+              Lessons
+            </button>
+          )}
         </nav>
 
         {/* The club notice, under the tabs so it is on every tab. Captains get
@@ -8084,6 +8198,25 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     </div>
                     <input className="input-field" type="email" placeholder="Email" value={playerEditor.email} onChange={e => setPlayerEditor({ ...playerEditor, email: e.target.value })} style={{ padding: '11px 13px', fontSize: '14px' }} />
                     <input className="input-field" type="tel" placeholder="Mobile" value={playerEditor.mobile} onChange={e => setPlayerEditor({ ...playerEditor, mobile: e.target.value })} style={{ padding: '11px 13px', fontSize: '14px' }} />
+                    {/* Lesson tokens. One token buys an hour of coaching; a
+                        booking spends them where the player has enough and
+                        otherwise raises an invoice. See lessons.js. */}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <label htmlFor="pl-tokens" style={{ fontSize: '13px', color: 'var(--ink)' }}>Lesson tokens</label>
+                      <input id="pl-tokens" className="input-field" type="number" min="0" step="1"
+                        value={playerEditor.tokens == null ? 0 : playerEditor.tokens}
+                        onChange={e => setPlayerEditor({ ...playerEditor, tokens: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                        style={{ width: '90px', padding: '9px 11px', fontSize: '14px' }} />
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {[1, 5, 10].map(n => (
+                          <button key={n} type="button" onClick={() => setPlayerEditor({ ...playerEditor, tokens: Math.max(0, (parseInt(playerEditor.tokens, 10) || 0) + n) })}
+                            style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', borderRadius: '4px', padding: '7px 10px', fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                            +{n}
+                          </button>
+                        ))}
+                      </div>
+                      <span style={{ fontSize: '11px', color: 'var(--muted)', flexBasis: '100%' }}>One token buys an hour of coaching.</span>
+                    </div>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--ink)', cursor: 'pointer' }}>
                       <input type="checkbox" checked={!!playerEditor.student} onChange={e => setPlayerEditor({ ...playerEditor, student: e.target.checked })} />
                       Student (eligible for subsidies)
@@ -8516,6 +8649,22 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                 );
               })()}
             </div>
+          )}
+
+          {activeTab === 'lessons' && captainMode && (
+            <LessonsBoard
+              slots={lessonSlots}
+              onSaveSlots={saveLessonSlots}
+              captainMode={captainMode}
+              canBookAsSelf={false}
+              myPlayer={null}
+              players={playerDb.filter(p => p.active !== false)}
+              rates={LESSON_SLOT_RATES}
+              quote={quoteLesson}
+              tokensOf={tokensOf}
+              onBook={bookLesson}
+              onCancelBooking={cancelLessonBooking}
+            />
           )}
 
           {activeTab === 'teams' && captainMode && (() => {
