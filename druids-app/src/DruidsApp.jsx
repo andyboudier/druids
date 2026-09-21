@@ -274,7 +274,13 @@ const fmtPence = (p) => `£${(p / 100).toFixed(2)}`;
 // load, but only if it's recent, so the app still opens fresh the next day.
 const VIEW_STATE_KEY = 'dlpc-view';
 const VIEW_STATE_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
-const CAPTAIN_ONLY_TABS = ['shop', 'players', 'teams'];
+// Tabs only a captain may sit on: a restore or a locked PIN bounces off these
+// back to Chukkas. 'lessons' belongs here too — without it, locking the PIN
+// while in the lessons diary left you there.
+const CAPTAIN_ONLY_TABS = ['shop', 'players', 'teams', 'lessons'];
+// More itself is not captain-only — a member opens it to find the PIN — but it
+// stays lit while you are inside any captain area.
+const CAPTAIN_TABS = ['more', ...CAPTAIN_ONLY_TABS];
 const readViewState = () => {
   try {
     const raw = localStorage.getItem(VIEW_STATE_KEY);
@@ -4324,6 +4330,54 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           color: var(--cream);
           border-bottom-color: var(--gold);
         }
+        /* Icons belong to the phone bottom bar only. */
+        .tab-icon { display: none; }
+        .app-main { padding-bottom: 60px; }
+        .app-footer { padding-bottom: 22px; }
+        /* On a phone the tab strip becomes a bottom bar, which is where a thumb
+           already is. Same markup and same state — only the styling moves, so
+           there is no second nav to keep in step. */
+        @media (max-width: 640px) {
+          .tabs {
+            position: fixed;
+            top: auto;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 60;
+            overflow-x: visible;
+            border-top: 1px solid rgba(184, 146, 74, 0.4);
+            border-bottom: none;
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+            box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.18);
+          }
+          .tab-btn {
+            flex: 1 1 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            padding: 8px 2px 7px;
+            font-size: 10px;
+            letter-spacing: 0.4px;
+            border-bottom: none;
+            margin-bottom: 0;
+          }
+          .tab-btn.active { color: var(--gold); border-bottom-color: transparent; }
+          .tab-icon { display: block; font-size: 17px; line-height: 1; }
+          /* "Live Game" is too wide for a quarter of a small phone. */
+          .tab-live { font-size: 0; }
+          .tab-live::after { content: 'Live'; font-size: 10px; letter-spacing: 0.4px; }
+          /* Clear the bar, and the home indicator under it. */
+          .app-main { padding-bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
+          /* The footer lives outside main, and the bar would sit on top of
+             Sign in and the captain link. */
+          .app-footer { padding-bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
+          /* Sit above the bar rather than on top of the More tab. An inline
+             style sets this button's own bottom offset, so the override needs
+             the weight. */
+          .refresh-fab { bottom: calc(env(safe-area-inset-bottom, 0px) + 74px) !important; }
+        }
         /* Day menu inside the Chukkas tab */
         .day-menu {
           display: grid;
@@ -5576,49 +5630,96 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           </div>
         </header>
 
-        {/* Tabs */}
+        {/* Tabs. Three member tabs and More; everything a captain runs sits
+            behind More, so the strip fits a phone and the admin areas stop
+            posing as peers of the member ones. On a phone the same markup is
+            restyled into a bottom bar — see the .tabs media query. */}
         <nav className="tabs">
           <button className={`tab-btn ${activeTab === 'chukkas' ? 'active' : ''}`} onClick={() => setActiveTab('chukkas')}>
-            Chukkas
+            <span className="tab-icon" aria-hidden="true">🏇</span><span>Chukkas</span>
           </button>
           <button className={`tab-btn ${activeTab === 'fixtures' ? 'active' : ''}`} onClick={() => setActiveTab('fixtures')}>
-            Fixtures
+            <span className="tab-icon" aria-hidden="true">📅</span><span>Fixtures</span>
           </button>
           <button className={`tab-btn ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>
-            Live Game
+            <span className="tab-icon" aria-hidden="true">⏱️</span><span className="tab-live">Live Game</span>
           </button>
-          {captainMode && (
-            <button className={`tab-btn ${activeTab === 'shop' ? 'active' : ''}`} onClick={() => setActiveTab('shop')}>
-              Shop
-            </button>
-          )}
-          {captainMode && (
-            <button className={`tab-btn ${activeTab === 'players' ? 'active' : ''}`} onClick={() => setActiveTab('players')}>
-              Players
-            </button>
-          )}
-          {captainMode && (
-            <button className={`tab-btn ${activeTab === 'teams' ? 'active' : ''}`} onClick={() => setActiveTab('teams')}>
-              Teams
-            </button>
-          )}
-          {captainMode && (
-            <button className={`tab-btn ${activeTab === 'lessons' ? 'active' : ''}`} onClick={() => setActiveTab('lessons')}>
-              Lessons
-            </button>
-          )}
+          <button className={`tab-btn ${CAPTAIN_TABS.includes(activeTab) ? 'active' : ''}`} onClick={() => setActiveTab('more')}>
+            <span className="tab-icon" aria-hidden="true">☰</span><span>More</span>
+          </button>
         </nav>
 
         {/* The club notice, under the tabs so it is on every tab. Captains get
             the editor here rather than in a settings screen — see notices.js. */}
         <NoticeBanner notice={notice} canEdit={captainMode} onSave={saveNotice} onClear={clearNotice} />
 
-        <main style={{ maxWidth: '540px', margin: '0 auto', padding: '24px 16px 60px' }}>
+        {/* padding-bottom is left to CSS so the phone bottom bar can claim the
+            room it needs without an inline shorthand overriding it. */}
+        <main className="app-main" style={{ maxWidth: '540px', margin: '0 auto', paddingTop: '24px', paddingLeft: '16px', paddingRight: '16px' }}>
 
           {/* Shared quick-add list of registered players (chukkas + tournaments) */}
           <datalist id="playerdb-names">
             {playerDb.filter(p => p.active !== false && !(p.name || '').includes('/')).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(p => <option key={p.id} value={p.name} />)}
           </datalist>
+
+          {/* ─── MORE — the captain area, and the way into it ───────────────
+              Everything a captain runs is one tap from here rather than four
+              tabs crowding the member ones. Gated on captainMode, which with
+              sign-in off (as TPPC runs) means the captain PIN — so the lessons
+              diary stays behind the PIN while it is being built out. */}
+          {activeTab === 'more' && (
+            <div className="reveal" style={{ maxWidth: '460px', margin: '0 auto' }}>
+              {captainMode ? (
+                <>
+                  <div className="label-eyebrow" style={{ fontSize: '11px', marginBottom: '12px' }}>Captain area</div>
+                  {[
+                    { id: 'lessons', icon: '🎓', label: 'Lessons',  blurb: 'Coaching slots and who is booked in', go: () => setActiveTab('lessons') },
+                    { id: 'players', icon: '👥', label: 'Players',  blurb: 'The player database, handicaps and tokens', go: () => { setPlayersView('players'); setActiveTab('players'); } },
+                    { id: 'payments', icon: '💷', label: 'Payments', blurb: 'Take a payment and settle what is owed',   go: () => { setPlayersView('checkout'); setActiveTab('players'); } },
+                    { id: 'teams',   icon: '🏆', label: 'Teams',    blurb: 'Tournament entries and team sheets',        go: () => setActiveTab('teams') },
+                    { id: 'shop',    icon: '🛍️', label: 'Shop',     blurb: 'Club shop (preview)',                       go: () => setActiveTab('shop') },
+                  ].map(a => (
+                    <button key={a.id} onClick={a.go} style={{
+                      display: 'flex', alignItems: 'center', gap: '12px', width: '100%', textAlign: 'left',
+                      background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '8px',
+                      padding: '14px 16px', marginBottom: '8px', cursor: 'pointer', fontFamily: 'inherit',
+                    }}>
+                      <span aria-hidden="true" style={{ fontSize: '19px' }}>{a.icon}</span>
+                      <span style={{ flex: 1 }}>
+                        <span style={{ display: 'block', fontSize: '15px', color: 'var(--ink)' }}>{a.label}</span>
+                        <span style={{ display: 'block', fontSize: '12px', color: 'var(--muted)' }}>{a.blurb}</span>
+                      </span>
+                      <span aria-hidden="true" style={{ color: 'var(--muted)', fontSize: '18px' }}>›</span>
+                    </button>
+                  ))}
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: 1.6, marginTop: '10px' }}>
+                    Subsidies and Admins sit inside Players.
+                  </div>
+                </>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                  <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '16px', lineHeight: 1.6 }}>
+                    Running the club? The captain area holds the players, the draw, the teams and the lessons diary.
+                  </div>
+                  <button onClick={() => setPinModalOpen(true)} style={{
+                    background: 'none', border: '1px solid var(--burgundy)', color: 'var(--burgundy)',
+                    borderRadius: '6px', padding: '11px 20px', fontSize: '12px', fontWeight: 600,
+                    cursor: 'pointer', letterSpacing: '0.5px', fontFamily: 'inherit',
+                  }}>Enter Captain PIN</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Back out of a captain area. On a phone the bottom bar shows More
+              lit, but an explicit way back reads better than tapping the lit
+              tab. */}
+          {captainMode && CAPTAIN_TABS.includes(activeTab) && activeTab !== 'more' && (
+            <button onClick={() => setActiveTab('more')} style={{
+              background: 'transparent', border: 0, color: 'var(--muted)', fontSize: '12px',
+              cursor: 'pointer', fontFamily: 'inherit', padding: '0 0 12px', letterSpacing: '0.5px',
+            }}>‹ Captain area</button>
+          )}
 
           {/* ─── CHUKKAS TAB — day menu + the selected day's booking page ─── */}
           {activeTab === 'chukkas' && (
@@ -8795,7 +8896,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
         </main>
 
-        <footer style={{ textAlign: 'center', padding: '22px 20px', borderTop: '1px solid var(--line)', fontSize: '10px', color: 'var(--muted)', letterSpacing: '2px', textTransform: 'uppercase', background: 'var(--cream-warm)' }}>
+        <footer className="app-footer" style={{ textAlign: 'center', paddingTop: '22px', paddingLeft: '20px', paddingRight: '20px', borderTop: '1px solid var(--line)', fontSize: '10px', color: 'var(--muted)', letterSpacing: '2px', textTransform: 'uppercase', background: 'var(--cream-warm)' }}>
           <div>Druids Lodge Polo Club · Druids Lodge, Salisbury, Wiltshire SP3 4UN</div>
           <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', textTransform: 'none', letterSpacing: '0.4px', fontSize: '11px' }}>
             <a href="tel:+441722782597" style={{ color: 'var(--muted)', textDecoration: 'none' }}>01722 782597</a>
@@ -8873,8 +8974,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           </div>
         </footer>
 
-        {/* Floating refresh button — fixed bottom-right, respects iPhone safe area */}
+        {/* Floating refresh button — fixed bottom-right, respects iPhone safe
+            area. The `refresh-fab` class lifts it clear of the phone bottom bar,
+            which otherwise lands underneath it and makes More untappable. */}
         <button
+          className="refresh-fab"
           onClick={hardRefresh}
           disabled={refreshing}
           aria-label={refreshing ? 'Refreshing…' : 'Refresh app'}
