@@ -2,7 +2,15 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Capacitor } from '@capacitor/core';
 import './storage'; // attaches window.storage backed by Firestore
+import { signInReturning, installClubAuth } from './authFirebase';
 import DruidsApp from './DruidsApp.jsx';
+
+// Sign-in is dormant for the club, and the auth SDK is only fetched when a
+// captain opens the Lessons tab (see SignInTest.jsx). The one load that cannot
+// wait for that is the tail of a sign-in itself: coming back from a provider's
+// redirect, or opening an emailed sign-in link. signInReturning() answers that
+// without touching firebase/auth, so the ordinary cold start is unchanged.
+if (signInReturning()) installClubAuth();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

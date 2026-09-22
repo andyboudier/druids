@@ -13,6 +13,10 @@ export default defineConfig({
         manualChunks: {
           react: ['react', 'react-dom'],
           firebase: ['firebase/app', 'firebase/firestore'],
+          // Auth gets a chunk of its own, fetched only when someone actually
+          // signs in (authFirebase.js imports it dynamically). Folded into the
+          // firebase chunk above it would land on every cold start instead.
+          firebaseAuth: ['firebase/auth'],
         },
       },
     },

@@ -10,6 +10,8 @@ import { parseGroundPin, shortLink, directionsUrl, placeUrl, pinKey, pinFrom, pi
 import NoticeBanner from './NoticeBanner';
 import { parseNotice } from './notices';
 import LessonsBoard from './LessonsBoard';
+import { useAuth } from './auth';
+import SignInTest from './SignInTest';
 import { normaliseSlots, removeBooking as removeLessonBooking, addBooking as addLessonBooking, tokenCost } from './lessons';
 import {
   trophyKeyFor, loadTrophyIndex, loadTrophyImage, saveTrophyImage,
@@ -1336,6 +1338,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const [editingAvailId, setEditingAvailId] = useState(null); // player id whose avail window is being edited
   const [scheduleView, setScheduleView] = useState('cards'); // 'cards' | 'table'
   const [confirmModal, setConfirmModal] = useState(null);   // { title, message, confirmLabel, onConfirm } | null
+  // Sign-in is switched off for the club (authFirebase.js), so this stays
+  // at its 'anon' default and nothing here reads it — the captain's
+  // sign-in bench on the Lessons tab is the only thing that does.
+  const auth = useAuth();
   const [captainMode, setCaptainMode] = useState(() => {
     try { return sessionStorage.getItem('dlpc-captain') === '1'; } catch (e) { return false; }
   });
@@ -8753,6 +8759,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
           )}
 
           {activeTab === 'lessons' && captainMode && (
+            <>
+            {/* Logins are being wired up here first, behind the PIN, so each
+                way in can be tried before members see any of it. Sign-in stays
+                switched off for the app at large — see authFirebase.js. */}
+            <SignInTest auth={auth} handicapOptions={HANDICAP_OPTIONS} />
             <LessonsBoard
               slots={lessonSlots}
               onSaveSlots={saveLessonSlots}
@@ -8766,6 +8777,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               onBook={bookLesson}
               onCancelBooking={cancelLessonBooking}
             />
+            </>
           )}
 
           {activeTab === 'teams' && captainMode && (() => {
