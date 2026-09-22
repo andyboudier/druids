@@ -2184,6 +2184,44 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     setPlayerDb(next);
     try { await window.storage.set('players', JSON.stringify(next), true); } catch (e) {}
   };
+  // A member editing their own profile is telling the club something, so it
+  // has to reach the club's record — until now it went into users/{uid} and
+  // stopped there, where nothing else reads it, and the edit looked accepted
+  // while changing nothing.
+  //
+  // Last edit wins, in either direction: the profile is pushed across only
+  // when it is newer than the player record. That matters because the sync
+  // the other way (above) seeds the profile from the record, so without the
+  // comparison a stale profile would overwrite a captain's correction the
+  // moment the member next signed in.
+  //
+  // Only what the member actually owns — their name, handicap and number.
+  // Never the email, which is the account's and is what the match runs on.
+  const syncedProfileAt = useRef(0);
+  useEffect(() => {
+    const prof = auth.profile;
+    if (!auth.ready || !auth.user || !myPlayer || !loaded || !prof || !prof.name) return;
+    const at = Number(prof.updated) || 0;
+    if (!at || at <= syncedProfileAt.current) return;
+    if (at <= (Number(myPlayer.updatedAt) || 0)) { syncedProfileAt.current = at; return; }
+    const hc = Number.isFinite(Number(prof.handicap)) && prof.handicap !== '' && prof.handicap != null
+      ? Number(prof.handicap) : myPlayer.handicap;
+    const next = {
+      ...myPlayer,
+      name: String(prof.name || '').trim() || myPlayer.name,
+      handicap: hc,
+      mobile: String(prof.mobile || '').trim() || myPlayer.mobile || '',
+      updatedAt: at,
+    };
+    const same = next.name === myPlayer.name
+      && String(next.handicap) === String(myPlayer.handicap)
+      && next.mobile === (myPlayer.mobile || '');
+    syncedProfileAt.current = at;
+    if (same) return;
+    savePlayerDb(playerDb.map(p => (p.id === myPlayer.id ? next : p)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.ready, auth.user && auth.user.uid, auth.profile, myPlayer && myPlayer.id, loaded]);
+
   // Once the club's record and the account are known to be the same person,
   // write the link down. Two reasons. It makes the match stop depending on a
   // guess — a member who later changes their email or mobile stays themselves.

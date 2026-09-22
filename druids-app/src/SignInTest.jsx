@@ -30,6 +30,11 @@ const dim = { fontSize: '11px', color: 'var(--muted)', lineHeight: 1.6 };
 
 export default function SignInTest({ auth, handicapOptions, linkedPlayer = null, match = null, providerHintFor = null }) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  // Which step the sheet opens on. Without this, 'Edit profile' fell through
+  // to AuthSheet's default and asked an already signed-in captain to sign in
+  // again — it only jumps to the profile by itself when there is no name yet.
+  const [sheetStart, setSheetStart] = useState('signin');
+  const openSheet = (at) => { setSheetStart(at); setSheetOpen(true); };
   const [starting, setStarting] = useState(true);
   const [installError, setInstallError] = useState('');
   const [live, setLive] = useState(false);
@@ -108,7 +113,7 @@ export default function SignInTest({ auth, handicapOptions, linkedPlayer = null,
                 : <>Not matched to anyone on the player list. Add their email to their record in Players, or link this account there.</>}
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
-            <button className="btn-secondary" disabled={busy} onClick={() => setSheetOpen(true)}>Edit profile</button>
+            <button className="btn-secondary" disabled={busy} onClick={() => openSheet('profile')}>Edit profile</button>
             <button className="btn-secondary" disabled={busy} onClick={doSignOut}>{busy ? 'Signing out…' : 'Sign out'}</button>
             {['google', 'apple'].filter(w => !(user.providers || []).includes(w === 'google' ? 'google.com' : 'apple.com')).map(w => (
               <button key={w} className="btn-secondary" disabled={busy} onClick={() => addWayIn(w)}>
@@ -123,7 +128,7 @@ export default function SignInTest({ auth, handicapOptions, linkedPlayer = null,
           <div style={{ fontSize: '13px', color: 'var(--ink)', marginBottom: '8px', lineHeight: 1.55 }}>
             Nobody is signed in. Try each way in before it goes out to the members.
           </div>
-          <button className="btn-primary" onClick={() => setSheetOpen(true)}>Open the sign-in sheet</button>
+          <button className="btn-primary" onClick={() => openSheet('signin')}>Open the sign-in sheet</button>
         </>
       )}
 
@@ -141,6 +146,7 @@ export default function SignInTest({ auth, handicapOptions, linkedPlayer = null,
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         auth={{ ...auth, enabled: true }}
+        startAt={sheetStart}
         handicapOptions={handicapOptions}
         linkedPlayer={linkedPlayer}
         providerHintFor={providerHintFor}
