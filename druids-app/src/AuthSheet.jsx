@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { authErrorText } from './auth';
+import { alreadySignedUpWith, providerUnion } from './accountLink';
 
 // The sign-in sheet, and the admins panel. Both talk only to `window.auth`
 // (see auth.js), so they render the same for every provider — Firebase in the
@@ -48,7 +49,11 @@ const AppleMark = () => (
 // signed-in member's record in the club's player database, when their email
 // is on one: the profile then starts from it, and a first sign-in is not
 // asked for details the club already has.
-export default function AuthSheet({ open, onClose, auth, handicapOptions = [-2, -1, 0, 1, 2, 3, 4], startAt, linkedPlayer = null }) {
+// `providerHintFor(email)` is the club's own record of how that member has
+// signed in before — see accountLink.js. It is asked only when Firebase
+// refuses a second way in, and it matters because Firebase's own answer comes
+// back empty on any project with email-enumeration protection switched on.
+export default function AuthSheet({ open, onClose, auth, handicapOptions = [-2, -1, 0, 1, 2, 3, 4], startAt, linkedPlayer = null, providerHintFor = null }) {
   // 'signin' | 'create' | 'link' | 'reset' | 'profile'
   const [step, setStep] = useState('signin');
   const [email, setEmail] = useState('');
@@ -107,7 +112,17 @@ export default function AuthSheet({ open, onClose, auth, handicapOptions = [-2, 
       await fn();
       if (okText) setNotice(okText);
     } catch (e) {
-      setError(authErrorText(e));
+      // "You already have an account with that email." Left at that it is a
+      // dead end, so find out which way they used the first time and say so.
+      if (e && e.code === 'auth/account-exists-with-different-credential') {
+        const em = (e.customData && e.customData.email) || '';
+        let known = [];
+        try { known = await window.auth.existingMethodsFor(em); } catch (err) { /* may be hidden */ }
+        const fromClub = providerHintFor ? (providerHintFor(em) || []) : [];
+        setError(alreadySignedUpWith(providerUnion(known, fromClub)));
+      } else {
+        setError(authErrorText(e));
+      }
     } finally {
       setBusy(false);
     }

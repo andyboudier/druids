@@ -12,6 +12,7 @@
 // It lives on the Lessons tab, which is behind the captain PIN.
 import React, { useEffect, useState } from 'react';
 import AuthSheet from './AuthSheet';
+import { MATCH_LABEL, providerSentence, providerLabel } from './accountLink';
 
 const METHOD_LABEL = {
   password: 'Email & password',
@@ -27,7 +28,7 @@ const box = {
 };
 const dim = { fontSize: '11px', color: 'var(--muted)', lineHeight: 1.6 };
 
-export default function SignInTest({ auth, handicapOptions, linkedPlayer = null }) {
+export default function SignInTest({ auth, handicapOptions, linkedPlayer = null, match = null, providerHintFor = null }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [starting, setStarting] = useState(true);
   const [installError, setInstallError] = useState('');
@@ -55,9 +56,26 @@ export default function SignInTest({ auth, handicapOptions, linkedPlayer = null 
   const user = auth.user;
   const methods = auth.methods || [];
 
+  const [note, setNote] = useState('');
+
   const doSignOut = async () => {
-    setBusy(true);
+    setBusy(true); setNote('');
     try { await window.auth.signOut(); } catch (e) { /* shown by the state below */ }
+    setBusy(false);
+  };
+
+  // Adding a second way in to the account already signed in. This is the only
+  // correct answer to "I signed up with Google and now I want Apple" —
+  // Firebase keeps one account per email, and a second account would split
+  // the member's bookings in two.
+  const addWayIn = async (which) => {
+    setBusy(true); setNote('');
+    try {
+      await window.auth.linkProvider(which);
+      setNote(`${providerLabel(which === 'google' ? 'google.com' : which === 'apple' ? 'apple.com' : 'facebook.com')} added — either will sign you in from now on.`);
+    } catch (e) {
+      setNote(String((e && e.message) || e).replace(/^Firebase:\s*/i, ''));
+    }
     setBusy(false);
   };
 
@@ -76,12 +94,29 @@ export default function SignInTest({ auth, handicapOptions, linkedPlayer = null 
           </div>
           <div style={dim}>
             {user.email || 'no email on this account'} · would be <strong>{auth.role}</strong>
-            {auth.profile && auth.profile.name ? ` · profile: ${auth.profile.name}` : ' · no profile saved yet'}
+            {' · in via '}<strong>{providerSentence(user.providers) || 'unknown'}</strong>
+          </div>
+          {/* Whether the club recognises this account as someone on its list,
+              and on what. This is the whole point of the bench. */}
+          <div style={{ ...dim, marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--line)' }}>
+            {linkedPlayer
+              ? <>Matched to <strong>{linkedPlayer.name}</strong> on {MATCH_LABEL[(match && match.how) === 'uid' && linkedPlayer.linkedBy ? linkedPlayer.linkedBy : (match && match.how)] || 'the player list'}.{linkedPlayer.uid ? ' Written down, so it holds even if their details change.' : ''}</>
+              : match && match.candidates && match.candidates.length > 1
+                ? <span style={{ color: 'var(--danger)' }}>
+                    {match.candidates.length} players share that {MATCH_LABEL[match.how]} ({match.candidates.map(c => c.name).join(', ')}), so nobody is picked. Link the right one from Players.
+                  </span>
+                : <>Not matched to anyone on the player list. Add their email to their record in Players, or link this account there.</>}
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
             <button className="btn-secondary" disabled={busy} onClick={() => setSheetOpen(true)}>Edit profile</button>
             <button className="btn-secondary" disabled={busy} onClick={doSignOut}>{busy ? 'Signing out…' : 'Sign out'}</button>
+            {['google', 'apple'].filter(w => !(user.providers || []).includes(w === 'google' ? 'google.com' : 'apple.com')).map(w => (
+              <button key={w} className="btn-secondary" disabled={busy} onClick={() => addWayIn(w)}>
+                Add {providerLabel(w === 'google' ? 'google.com' : 'apple.com')}
+              </button>
+            ))}
           </div>
+          {note && <div style={{ ...dim, marginTop: '10px', color: 'var(--burgundy)' }}>{note}</div>}
         </>
       ) : (
         <>
@@ -108,6 +143,7 @@ export default function SignInTest({ auth, handicapOptions, linkedPlayer = null 
         auth={{ ...auth, enabled: true }}
         handicapOptions={handicapOptions}
         linkedPlayer={linkedPlayer}
+        providerHintFor={providerHintFor}
       />
     </div>
   );

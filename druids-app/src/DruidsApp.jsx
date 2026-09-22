@@ -12,6 +12,7 @@ import { parseNotice } from './notices';
 import LessonsBoard from './LessonsBoard';
 import { useAuth } from './auth';
 import SignInTest from './SignInTest';
+import { matchPlayer, duplicatesOf, mergePlayers, mergeConflicts, providerUnion, providerSentence, normEmail, MATCH_LABEL } from './accountLink';
 import { normaliseSlots, removeBooking as removeLessonBooking, addBooking as addLessonBooking, tokenCost } from './lessons';
 import {
   trophyKeyFor, loadTrophyIndex, loadTrophyImage, saveTrophyImage,
@@ -1342,6 +1343,25 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // at its 'anon' default and nothing here reads it — the captain's
   // sign-in bench on the Lessons tab is the only thing that does.
   const auth = useAuth();
+  // What is known about whoever is signed in: the account, plus whatever they
+  // told us about themselves. Google gives an email and a name but never a
+  // number, and Apple's Hide My Email gives an address the club has never
+  // seen, so the mobile and name rungs of the cascade need the profile.
+  const authSubject = auth.user ? {
+    ...auth.user,
+    mobile: (auth.profile && auth.profile.mobile) || '',
+    name: (auth.profile && auth.profile.name) || auth.user.displayName || '',
+  } : null;
+  const myMatch = (authSubject ? matchPlayer(playerDb, authSubject) : { player: null, how: null, candidates: [] });
+  const myPlayer = myMatch.player;
+  // What the sign-in sheet says when Firebase refuses a second way in: the
+  // club's own record of how that email has signed in before.
+  const providerHintFor = (email) => {
+    const em = normEmail(email);
+    if (!em) return [];
+    const rec = playerDb.find(p => normEmail(p.email) === em);
+    return (rec && rec.authProviders) || [];
+  };
   const [captainMode, setCaptainMode] = useState(() => {
     try { return sessionStorage.getItem('dlpc-captain') === '1'; } catch (e) { return false; }
   });
@@ -2164,10 +2184,93 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     setPlayerDb(next);
     try { await window.storage.set('players', JSON.stringify(next), true); } catch (e) {}
   };
+  // Once the club's record and the account are known to be the same person,
+  // write the link down. Two reasons. It makes the match stop depending on a
+  // guess — a member who later changes their email or mobile stays themselves.
+  // And it records which ways they sign in, which is what lets the sheet tell
+  // someone who reaches for Apple that they started with Google; Firebase will
+  // not say so on a project with email-enumeration protection on.
+  useEffect(() => {
+    if (!auth.ready || !auth.user || !myPlayer || !loaded) return;
+    const nextProviders = providerUnion(myPlayer.authProviders, auth.user.providers || []);
+    const linkChanged = (myPlayer.uid || '') !== auth.user.uid;
+    const providersChanged = nextProviders.length !== (myPlayer.authProviders || []).length;
+    if (!linkChanged && !providersChanged) return;
+    // Keep what the link was first made on. Once the uid is written every
+    // later match is "the linked account", and a captain checking a doubtful
+    // one wants to know whether it began as an email or as a name.
+    const basis = myPlayer.linkedBy || (myMatch.how === 'uid' ? '' : myMatch.how) || '';
+    savePlayerDb(playerDb.map(p => (p.id === myPlayer.id
+      ? { ...p, uid: auth.user.uid, authProviders: nextProviders, linkedBy: basis, updatedAt: Date.now() }
+      : p)));
+    // playerDb is deliberately absent: it changes on every save, and the
+    // guards above already make this a no-op once the record is up to date.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.ready, auth.user && auth.user.uid, (auth.user && auth.user.providers || []).join(','), myPlayer && myPlayer.id, loaded]);
+
+  // --- Accounts and duplicates (see accountLink.js) ---
+  //
+  // The club's list came first and sign-in came later, so the two have to be
+  // reconciled by hand sometimes: a guess that went wrong, or the same person
+  // on the list twice because a sign-in did not recognise them.
+
+  // Which account a player signs in as. Setting it here is what overrides the
+  // email/mobile/name guess, and it is exclusive — an account belongs to one
+  // player, so linking it here takes it off whoever had it.
+  const setPlayerAccount = async (playerId, uid, providers) => {
+    const u = (uid || '').trim();
+    await savePlayerDb(playerDb.map((p) => {
+      if (p.id === playerId) {
+        return { ...p, uid: u, authProviders: u ? providerUnion(p.authProviders, providers || []) : [], updatedAt: Date.now() };
+      }
+      if (u && (p.uid || '') === u) return { ...p, uid: '', updatedAt: Date.now() };
+      return p;
+    }));
+    setPdbError(u ? 'Account linked.' : 'Account unlinked — they will be matched by email, mobile or name again.');
+  };
+
+  // Fold one player into another. The merged record keeps the primary's id
+  // because everything else points at it — rosters, lesson bookings and every
+  // transaction — but the duplicate may have collected
+  // references of its own, so those are moved across before it is removed.
+  // Skipping that would quietly detach somebody's chukkas and their invoices.
+  const mergePlayerInto = async (primaryId, otherId) => {
+    const primary = playerDb.find(p => p.id === primaryId);
+    const other = playerDb.find(p => p.id === otherId);
+    if (!primary || !other || primary.id === other.id) return;
+    const merged = mergePlayers(primary, other);
+    if (!window.confirm(`Merge "${other.name}" into "${primary.name}"?\n\nOne record is left, under "${merged.name}". Their chukkas, lessons and invoices are moved across. This cannot be undone.`)) return;
+
+    await savePlayerDb(playerDb.filter(p => p.id !== other.id).map(p => (p.id === primary.id ? merged : p)));
+
+    const repoint = (v) => (v === other.id ? primary.id : v);
+    // Rosters, day by day; only the days that mention them are written back.
+    // This club has no waiting list, so there is nothing else per-day to move.
+    for (const dk of DAY_KEYS) {
+      const list = rosters[dk] || [];
+      if (list.some(e => e.playerId === other.id)) {
+        await saveRoster(list.map(e => (e.playerId === other.id ? { ...e, playerId: primary.id, name: merged.name } : e)), dk);
+      }
+    }
+    if (transactions.some(t => t.playerId === other.id)) {
+      const nextTx = transactions.map(t => (t.playerId === other.id ? { ...t, playerId: primary.id, playerName: merged.name } : t));
+      setTransactions(nextTx);
+      try { await window.storage.set('transactions', JSON.stringify(nextTx), true); } catch (e) {}
+    }
+    if (lessonSlots.some(sl => (sl.bookings || []).some(b => b.playerId === other.id))) {
+      await saveLessonSlots(lessonSlots.map(sl => ({
+        ...sl,
+        bookings: (sl.bookings || []).map(b => (b.playerId === other.id ? { ...b, playerId: primary.id, name: merged.name } : b)),
+      })));
+    }
+    setPlayerEditor(null);
+    setPdbError(`Merged "${other.name}" into "${merged.name}".`);
+  };
+
   const openNewPlayer = () => { setPdbError(''); setPlayerEditor(blankPlayer()); };
   const openEditPlayer = (p) => {
     setPdbError('');
-    setPlayerEditor({ ...blankPlayer(), ...p, handicap: p.handicap == null ? '' : String(p.handicap) });
+    setPlayerEditor({ ...blankPlayer(), ...p, handicap: p.handicap == null ? '' : String(p.handicap), uid: p.uid || '', authProviders: p.authProviders || [], linkedBy: p.linkedBy || '' });
   };
   const savePlayer = async () => {
     const draft = playerEditor || {};
@@ -2191,6 +2294,13 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       // Lesson tokens. The record is an explicit whitelist, so a field that
       // is not named here is dropped on every save — as this one was.
       tokens: Math.max(0, parseInt(draft.tokens, 10) || 0),
+      // The account this player signs in as, the ways they have used, and what
+      // the link was first matched on. All three are set by signing in, not by
+      // this form — but the record is an explicit whitelist, so leaving them
+      // out here would wipe the link every time a captain saved the player.
+      uid: (draft.uid || '').trim(),
+      authProviders: Array.isArray(draft.authProviders) ? draft.authProviders : [],
+      linkedBy: (draft.linkedBy || '').trim(),
       updatedAt: Date.now(),
     };
     const exists = playerDb.some(p => p.id === record.id);
@@ -8355,6 +8465,58 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                         )}
                       </div>
                     )}
+                    {/* The sign-in account, and anyone on the list who looks
+                        like the same person. Both are repairs a captain makes
+                        rather than fields they fill in — see accountLink.js. */}
+                    {playerEditor.id && (() => {
+                      const dups = duplicatesOf(playerDb, playerEditor);
+                      const linkedHere = !!playerEditor.uid;
+                      const signedInIsMe = auth.user && auth.user.uid === playerEditor.uid;
+                      const canTakeAccount = auth.user && !signedInIsMe;
+                      const holder = playerEditor.uid ? playerDb.find(p => p.uid === playerEditor.uid && p.id !== playerEditor.id) : null;
+                      return (
+                        <div style={{ border: '1px solid var(--line)', borderRadius: '6px', padding: '12px 14px', background: 'var(--cream-pale)' }}>
+                          <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '6px' }}>Sign-in account</div>
+                          <div style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: 1.6 }}>
+                            {linkedHere
+                              ? <>Linked{(playerEditor.authProviders || []).length ? <> — signs in with <strong>{providerSentence(playerEditor.authProviders)}</strong></> : ''}{playerEditor.linkedBy ? <>, first matched on their <strong>{MATCH_LABEL[playerEditor.linkedBy] || playerEditor.linkedBy}</strong></> : ''}.{signedInIsMe ? ' This is the account signed in now.' : ''}</>
+                              : <>Not linked. They will be matched on {playerEditor.email ? 'their email' : playerEditor.mobile ? 'their mobile' : 'their name'} the first time they sign in, and the link written down then.</>}
+                            {holder && <div style={{ color: 'var(--danger)' }}>That account is also on "{holder.name}" — one of the two is wrong.</div>}
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                            {linkedHere && (
+                              <button onClick={() => setPlayerAccount(playerEditor.id, '')} style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', padding: '8px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Unlink</button>
+                            )}
+                            {canTakeAccount && (
+                              <button onClick={() => setPlayerAccount(playerEditor.id, auth.user.uid, auth.user.providers)} style={{ background: 'transparent', border: '1px solid var(--burgundy)', color: 'var(--burgundy)', padding: '8px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>
+                                Link to the account signed in now
+                              </button>
+                            )}
+                          </div>
+                          {dups.length > 0 && (
+                            <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid var(--line)' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--danger)', marginBottom: '6px', lineHeight: 1.5 }}>
+                                {dups.length === 1 ? 'Another record looks like the same person' : `${dups.length} other records look like the same person`} — merging keeps this one and moves their chukkas, lessons and invoices across.
+                              </div>
+                              {dups.map(d => (
+                                <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0' }}>
+                                  <span style={{ flex: 1, fontSize: '12px', color: 'var(--ink)' }}>
+                                    {d.name}
+                                    <span style={{ color: 'var(--muted)' }}>{d.email ? ` · ${d.email}` : ''}{d.mobile ? ` · ${d.mobile}` : ''}{d.active === false ? ' · inactive' : ''}</span>
+                                    {mergeConflicts(playerEditor, d).length > 0 && (
+                                      <span style={{ display: 'block', color: 'var(--muted)', fontSize: '11px' }}>
+                                        differs on {mergeConflicts(playerEditor, d).map(c => c.field).join(', ')} — this record's values are kept
+                                      </span>
+                                    )}
+                                  </span>
+                                  <button onClick={() => mergePlayerInto(playerEditor.id, d.id)} style={{ background: 'var(--burgundy)', color: 'var(--cream)', border: 'none', padding: '7px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', flexShrink: 0 }}>Merge in</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--ink)', cursor: 'pointer' }}>
                       <input type="checkbox" checked={playerEditor.active !== false} onChange={e => setPlayerEditor({ ...playerEditor, active: e.target.checked })} />
                       Active member
@@ -8763,7 +8925,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             {/* Logins are being wired up here first, behind the PIN, so each
                 way in can be tried before members see any of it. Sign-in stays
                 switched off for the app at large — see authFirebase.js. */}
-            <SignInTest auth={auth} handicapOptions={HANDICAP_OPTIONS} />
+            <SignInTest auth={auth} handicapOptions={HANDICAP_OPTIONS} linkedPlayer={myPlayer} match={myMatch} providerHintFor={providerHintFor} />
             <LessonsBoard
               slots={lessonSlots}
               onSaveSlots={saveLessonSlots}

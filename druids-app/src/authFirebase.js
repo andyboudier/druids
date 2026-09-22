@@ -24,11 +24,15 @@ export const SIGN_IN_LIVE = false;
 // when sign-in goes live.
 export const FIXED_ADMIN_EMAILS = [];
 
-// Which buttons the sheet offers. Listing one here does not switch it on:
-// Firebase decides that, and a method not enabled in the console simply
-// errors when tapped. Facebook and Apple each need an account with the
-// provider (a Facebook app; an Apple Services ID and key) before they work.
-export const SIGN_IN_METHODS = ['password', 'link', 'google', 'facebook', 'apple'];
+// Which buttons the sheet offers, and it should name only what is switched on
+// in the club's Firebase console — a button for a method that is off is a dead
+// end that reports auth/operation-not-allowed when tapped.
+//
+// The clubs run Google, Apple and the emailed sign-in link. There is
+// deliberately no password: one fewer thing for a member to forget, and one
+// fewer thing for the club to reset. 'facebook' and 'password' are supported
+// by everything here and can simply be added back to this list once enabled.
+export const SIGN_IN_METHODS = ['google', 'apple', 'link'];
 
 // The one Firestore instance the app already has — never a second one; see
 // the note in firebase.js about why that matters here.
@@ -118,6 +122,32 @@ const provider = {
     needAuth();
     await FA.signOut(fbAuth);
   },
+  // Firebase keeps one account per email address, so a member who signed up
+  // with Google and later taps Apple is refused. This is the way through:
+  // signed in already, they attach the second provider to the same account,
+  // and from then on either works. Linking is the only correct fix — a second
+  // account would split their bookings in two.
+  async linkProvider(which) {
+    needAuth();
+    if (!fbAuth.currentUser) throw new Error('Sign in first, then add another way in.');
+    const p = which === 'google' ? new FA.GoogleAuthProvider()
+      : which === 'facebook' ? new FA.FacebookAuthProvider()
+      : which === 'apple' ? new FA.OAuthProvider('apple.com')
+      : null;
+    if (!p) throw new Error('That sign-in method cannot be added.');
+    await FA.linkWithPopup(fbAuth.currentUser, p);
+    provider.user = snapshotUser(fbAuth.currentUser);
+    announceAuthChange();
+  },
+  // Which ways in this account already has. Firebase's own answer is the
+  // authoritative one; it is empty when the project has email-enumeration
+  // protection on, which is why the club's player record keeps its own copy
+  // (see accountLink.js) and the sheet prefers that when this comes back bare.
+  async existingMethodsFor(email) {
+    needAuth();
+    try { return await FA.fetchSignInMethodsForEmail(fbAuth, String(email || '').trim()); }
+    catch (e) { return []; }
+  },
   async saveProfile(profile) {
     needAuth();
     if (!provider.user) throw new Error('Sign in first.');
@@ -186,6 +216,16 @@ export function signInReturning() {
   return s.includes('mode=signIn') && s.includes('oobCode=');
 }
 
+// The fields the app renders from, plus the providers this account can sign
+// in with — that last one is what lets the app tell someone which way they
+// used the first time.
+const snapshotUser = (u) => (u ? {
+  uid: u.uid,
+  email: u.email || '',
+  displayName: u.displayName || '',
+  providers: (u.providerData || []).map((d) => d && d.providerId).filter(Boolean),
+} : null);
+
 const computeRole = () => {
   if (!provider.user) return 'anon';
   const e = lower(provider.user.email);
@@ -248,9 +288,7 @@ export function installClubAuth() {
       .finally(clearRedirect);
     completeLinkSignIn();
     FA.onAuthStateChanged(fbAuth, (u) => {
-      provider.user = u
-        ? { uid: u.uid, email: u.email || '', displayName: u.displayName || '' }
-        : null;
+      provider.user = snapshotUser(u);
       provider.role = computeRole();
       provider.ready = true;
       watchProfile(u ? u.uid : null);

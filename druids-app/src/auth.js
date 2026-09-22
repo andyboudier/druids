@@ -27,7 +27,10 @@
 //             flash "sign in" at someone who is already signed in)
 //   methods   which buttons to offer: 'password', 'link', 'google', 'facebook',
 //             'apple'
-//   user      null | { uid, email, displayName }
+//   user      null | { uid, email, displayName, providers }
+//             providers are the ways this account can sign in
+//             ('google.com', 'apple.com', 'emailLink', 'password'), which is
+//             how the app can say which way someone used the first time
 //   role      'anon' | 'member' | 'admin'
 //   profile   null | { name, handicap, mobile, hpa } — what the member plays as
 //
@@ -36,6 +39,10 @@
 //   sendPasswordReset(email)
 //   sendSignInLink(email)          the link lands back on the app and signs in
 //   signInWithGoogle() / signInWithFacebook() / signInWithApple()
+//   linkProvider('google'|'facebook'|'apple')   adds a second way in to the
+//                                  account already signed in
+//   existingMethodsFor(email) → [method]        may be empty where the
+//                                  project hides it; see accountLink.js
 //   signOut()
 //   saveProfile({ name, handicap, mobile, hpa })
 //   listAdmins() → [email]         admins only
@@ -64,6 +71,8 @@ export const noAuth = {
   signInWithGoogle: notEnabled,
   signInWithFacebook: notEnabled,
   signInWithApple: notEnabled,
+  linkProvider: notEnabled,
+  existingMethodsFor: async () => [],
   signOut: async () => {},
   saveProfile: notEnabled,
   listAdmins: async () => [],
