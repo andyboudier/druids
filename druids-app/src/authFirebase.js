@@ -28,11 +28,12 @@ export const FIXED_ADMIN_EMAILS = [];
 // in the club's Firebase console — a button for a method that is off is a dead
 // end that reports auth/operation-not-allowed when tapped.
 //
-// The clubs run Google, Apple and the emailed sign-in link. There is
-// deliberately no password: one fewer thing for a member to forget, and one
-// fewer thing for the club to reset. 'facebook' and 'password' are supported
-// by everything here and can simply be added back to this list once enabled.
-export const SIGN_IN_METHODS = ['google', 'apple', 'link'];
+// The clubs run Google, Apple, and email either way — a password for those who
+// want one, an emailed link for those who would rather not keep one. Both are
+// the same provider in the Firebase console (Email/Password, with "Email link"
+// as a second switch beneath it), so enabling one does not enable the other.
+// 'facebook' is supported by everything here and is one entry away.
+export const SIGN_IN_METHODS = ['google', 'apple', 'password', 'link'];
 
 // The one Firestore instance the app already has — never a second one; see
 // the note in firebase.js about why that matters here.
