@@ -158,7 +158,11 @@ const provider = {
       mobile: String(profile.mobile || '').trim(),
       hpa: String(profile.hpa || '').trim(),
       email: provider.user.email || '',
-      updated: Date.now(),
+      // Normally now, but the caller may pass the timestamp it is copying
+      // from. That is what lets the app seed a profile from the club's player
+      // record and leave the two stamps equal — without it the seed would look
+      // like a fresh edit and be pushed straight back, forever.
+      updated: Number(profile.updated) || Date.now(),
     };
     await setDoc(doc(db, 'users', provider.user.uid), clean, { merge: true });
     provider.profile = clean;

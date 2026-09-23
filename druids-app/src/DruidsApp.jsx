@@ -2184,43 +2184,67 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     setPlayerDb(next);
     try { await window.storage.set('players', JSON.stringify(next), true); } catch (e) {}
   };
-  // A member editing their own profile is telling the club something, so it
-  // has to reach the club's record — until now it went into users/{uid} and
-  // stopped there, where nothing else reads it, and the edit looked accepted
-  // while changing nothing.
+  // Keep a member's profile and the club's player record in step, in
+  // whichever direction was edited last.
   //
-  // Last edit wins, in either direction: the profile is pushed across only
-  // when it is newer than the player record. That matters because the sync
-  // the other way (above) seeds the profile from the record, so without the
-  // comparison a stale profile would overwrite a captain's correction the
-  // moment the member next signed in.
+  // Both halves matter and only one was here before. A member editing their
+  // profile has to reach the record, or the change looks accepted and the
+  // draw never hears about it. A captain correcting the record has to reach
+  // the profile, or the member opens Edit profile and is shown a stale
+  // handicap — and saving from there would put the old value back.
   //
-  // Only what the member actually owns — their name, handicap and number.
-  // Never the email, which is the account's and is what the match runs on.
+  // Last edit wins, compared on profile.updated against the record's
+  // updatedAt. Whichever way it goes, the copy is written with the SOURCE's
+  // timestamp, so afterwards the two are equal and neither side looks newer.
+  // Stamping the copy with the time of day instead would make every sync look
+  // like a fresh edit and bounce the two forever.
+  //
+  // Only what the member owns travels: their name, handicap and number. Never
+  // the email, which belongs to the account and is what the match runs on.
   const syncedProfileAt = useRef(0);
   useEffect(() => {
+    if (!auth.ready || !auth.user || !myPlayer || !loaded) return;
     const prof = auth.profile;
-    if (!auth.ready || !auth.user || !myPlayer || !loaded || !prof || !prof.name) return;
-    const at = Number(prof.updated) || 0;
-    if (!at || at <= syncedProfileAt.current) return;
-    if (at <= (Number(myPlayer.updatedAt) || 0)) { syncedProfileAt.current = at; return; }
-    const hc = Number.isFinite(Number(prof.handicap)) && prof.handicap !== '' && prof.handicap != null
-      ? Number(prof.handicap) : myPlayer.handicap;
+    const pAt = Number(prof && prof.updated) || 0;
+    const rAt = Number(myPlayer.updatedAt) || 0;
+    const num = (v) => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+
+    // The record is the newer of the two, or there is no profile yet: copy it
+    // across. A first sign-in lands here, which is what fills in a member the
+    // club already knows without asking them anything.
+    if (!prof || !prof.name || rAt > pAt) {
+      const want = { name: myPlayer.name || '', handicap: myPlayer.handicap, mobile: myPlayer.mobile || '' };
+      const same = prof && prof.name === want.name
+        && String(num(prof.handicap)) === String(num(want.handicap))
+        && (prof.mobile || '') === want.mobile;
+      if (same || !want.name) return;
+      syncedProfileAt.current = rAt;
+      window.auth.saveProfile({ ...want, hpa: (prof && prof.hpa) || '', updated: rAt || Date.now() }).catch(() => {});
+      return;
+    }
+
+    // The profile is the newer one: copy it to the record. Guarded on having
+    // actually changed since the last sync, so merely reloading the page never
+    // republishes an old profile over a captain's work.
+    if (pAt <= syncedProfileAt.current) return;
     const next = {
       ...myPlayer,
       name: String(prof.name || '').trim() || myPlayer.name,
-      handicap: hc,
+      handicap: num(prof.handicap) == null ? myPlayer.handicap : num(prof.handicap),
       mobile: String(prof.mobile || '').trim() || myPlayer.mobile || '',
-      updatedAt: at,
+      updatedAt: pAt,
     };
     const same = next.name === myPlayer.name
       && String(next.handicap) === String(myPlayer.handicap)
       && next.mobile === (myPlayer.mobile || '');
-    syncedProfileAt.current = at;
+    syncedProfileAt.current = pAt;
     if (same) return;
     savePlayerDb(playerDb.map(p => (p.id === myPlayer.id ? next : p)));
+    // playerDb is deliberately absent: it changes on every save, and the
+    // guards above already make this a no-op once the two agree.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.ready, auth.user && auth.user.uid, auth.profile, myPlayer && myPlayer.id, loaded]);
+  }, [auth.ready, auth.user && auth.user.uid, auth.profile, myPlayer && myPlayer.id,
+      myPlayer && myPlayer.updatedAt, loaded]);
 
   // Once the club's record and the account are known to be the same person,
   // write the link down. Two reasons. It makes the match stop depending on a
