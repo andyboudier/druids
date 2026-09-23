@@ -98,6 +98,9 @@ export const blankSlot = (date) => ({
   end: '12:00',
   coach: '',
   ground: '',
+  // Empty means a coaching window, sliced up by the hour. A kind makes this a
+  // club session instead — see "Club sessions" below.
+  kind: '',
   individual: true,
   group: true,
   minGroup: MIN_GROUP,
@@ -130,8 +133,12 @@ export const normaliseSlot = (raw) => {
     date,
     start: fmtHM(parseHM(raw.start) ?? 600),
     end: fmtHM(parseHM(raw.end) ?? 720),
-    individual: raw.individual !== false,
-    group: raw.group !== false,
+    kind: String(raw.kind || '').trim(),
+    // A club session is one block at one price, so it is never also offered
+    // as a coaching window — otherwise the hour-by-hour machinery would find
+    // sub-ranges inside it and sell the same evening twice.
+    individual: !String(raw.kind || '').trim() && raw.individual !== false,
+    group: !String(raw.kind || '').trim() && raw.group !== false,
     minGroup: Math.max(1, Number(raw.minGroup) || MIN_GROUP),
     maxGroup: Math.max(1, Number(raw.maxGroup) || MAX_GROUP),
     ponyHireDefault: raw.ponyHireDefault !== false,
@@ -156,7 +163,7 @@ export const bySlotTime = (a, b) =>
 // A 2-hour window yields 13:00 1hr, 13:00 2hr, 14:00 1hr.
 export function sessionOptions(slot, lengths) {
   const total = windowHours(slot);
-  if (!total) return [];
+  if (!total || isClubSession(slot)) return [];
   const startMin = parseHM(slot.start);
   const allowed = lengths && lengths.length ? lengths : null;
   const out = [];
@@ -200,6 +207,7 @@ export const groupBookings = (slot, start, hours) =>
 // range only with itself: two different groups cannot run at once, because
 // there is one coach and one string of ponies.
 export function blockedReason(slot, start, hours, type, rates) {
+  if (isClubSession(slot)) return 'That is a club session, not a coaching window.';
   if (type === 'individual' && !slot.individual) return 'Individual lessons are not offered in this slot.';
   if (type === 'group' && !slot.group) return 'Group lessons are not offered in this slot.';
   if (rates && !hoursOffered(rates, type).includes(hours)) return `The club has no ${hours}-hour ${type} rate.`;
@@ -221,6 +229,7 @@ export const canBook = (slot, start, hours, type, rates) => blockedReason(slot, 
 
 // The options actually worth showing, each with its state.
 export function availableSessions(slot, rates) {
+  if (isClubSession(slot)) return [];
   const out = [];
   for (const type of ['individual', 'group']) {
     if (type === 'individual' && !slot.individual) continue;
@@ -243,6 +252,70 @@ export const groupShort = (slot, start, hours) => {
   const n = groupBookings(slot, start, hours).length;
   return n > 0 && n < slot.minGroup;
 };
+
+// ── Club sessions ───────────────────────────────────────────────────────────
+//
+// A coaching window is the coach's availability, sold by the hour and sliced
+// up. A club session is not: it is one block of time at one price with a set
+// number of places, and you are either in it or you are not. Tedworth's Ladies
+// Only and Instructional Chukkas evenings are that shape — an hour, two
+// chukkas, up to eight riders — and putting them through the window machinery
+// would offer sub-ranges of an evening that is sold whole.
+//
+// So a slot carries a `kind`, and a kind makes it a session. What the kinds
+// ARE — their names, their length, their places and above all their price —
+// stays in the app, exactly as the rate card does and for the same reason:
+// they are one club's, and a shared list would put another club's name or
+// another club's price on somebody's invoice. This module only knows that a
+// session is booked whole.
+//
+// Nothing here is tied to a weekday. The captain puts a session on whatever
+// date suits and can run more than one, which is the whole point of moving
+// them off the fixed day tabs.
+
+export const isClubSession = (slot) => !!String((slot && slot.kind) || '').trim();
+
+export const clubSessionBookings = (slot) => (slot.bookings || []).filter(b => b.type === 'session');
+
+export const clubSessionPlaces = (slot) => Math.max(1, Number(slot && slot.maxGroup) || MAX_GROUP);
+
+export const clubSessionSpots = (slot) => Math.max(0, clubSessionPlaces(slot) - clubSessionBookings(slot).length);
+
+// Runs of spaces are collapsed, not just trimmed: a captain typing somebody in
+// by hand twice writes the name a little differently the second time, and
+// "Jo  Bloggs" is not a second rider.
+const sameRider = (a, b) => {
+  if (a.playerId && b.playerId) return String(a.playerId) === String(b.playerId);
+  const n = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return !!n(a.name) && n(a.name) === n(b.name);
+};
+
+// Why a rider cannot take a place, or null if they can. A captain booking
+// somebody in by hand goes through this too — it is the places that are
+// finite, not the way the booking was made.
+export function clubSessionBlockedReason(slot, rider) {
+  if (!isClubSession(slot)) return 'That is not a club session.';
+  // Already booked is checked BEFORE full, or a captain adding somebody who is
+  // in fact already in a full session is told to go and find a place for them.
+  if (clubSessionBookings(slot).some(b => sameRider(b, rider || {}))) {
+    const who = String((rider && rider.name) || '').trim().replace(/\s+/g, ' ');
+    return who ? `${who} already has a place.` : 'They already have a place.';
+  }
+  if (clubSessionSpots(slot) <= 0) return 'That session is full.';
+  return null;
+}
+
+export function addClubSessionBooking(slot, rider) {
+  const reason = clubSessionBlockedReason(slot, rider);
+  if (reason) return { ok: false, error: reason, slot };
+  // start and hours come from the slot, not the caller: a place is the whole
+  // session, and letting them be passed in is how half-sessions would appear.
+  const entry = {
+    id: newBookingId(), at: Date.now(), ponyHire: true, ...rider,
+    type: 'session', kind: slot.kind, start: slot.start, hours: windowHours(slot) || 1,
+  };
+  return { ok: true, slot: { ...slot, bookings: [...(slot.bookings || []), entry] }, booking: entry };
+}
 
 // ── Bookings ────────────────────────────────────────────────────────────────
 
