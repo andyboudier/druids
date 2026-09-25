@@ -357,8 +357,10 @@ export function AdminsPanel({ auth }) {
       <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
         <input className="input-field" type="email" inputMode="email" placeholder="email@example.com" value={draft}
           onChange={(e) => { setDraft(e.target.value); setError(''); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') add(); }} style={{ flex: 1 }} />
-        <button className="btn-primary" onClick={add} disabled={busy || !draft.trim()}>Add</button>
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }} style={{ flex: 1, minWidth: 0 }} />
+        {/* .btn-primary is full-width by default; in this row that squeezed
+            the email box to nothing, so the button takes only what it needs. */}
+        <button className="btn-primary" onClick={add} disabled={busy || !draft.trim()} style={{ width: 'auto', flex: '0 0 auto', padding: '0 22px' }}>Add</button>
       </div>
       {error && <div style={{ ...S.err, textAlign: 'left', marginTop: 0, marginBottom: '10px' }}>{error}</div>}
       {admins === null ? (
