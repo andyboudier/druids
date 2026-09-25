@@ -1,0 +1,58 @@
+rules_version = '2';
+
+// Firestore rules for the club apps (TPPC, Druids, Vaux, and TPPC-Dev).
+//
+// The apps run without sign-in: anyone may book, and the captain PIN is checked
+// in the app. So the data the app itself uses has to stay readable and
+// writable by anyone holding the app's public web config — these rules cannot
+// stop a determined person changing a roster, only App Check or sign-in can.
+// What they do stop:
+//   - reading or writing anything the app does not use (everything not
+//     matched below is denied — the old rules allowed every path);
+//   - storing anything but the app's own shape in the documents it does use;
+//   - reading or changing another member's sign-in profile;
+//   - anyone but an existing admin changing who the admins are.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Everything the app keeps: one document per key, holding a single JSON
+    // string in `value` (see storage.js). Read by the app and the Watch.
+    match /shared/{key} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['value'])
+                            && request.resource.data.value is string
+                            && request.resource.data.value.size() < 1000000;
+      allow delete: if true;
+    }
+
+    // Trophy photos, one per trophy (trophyStore.js). The image is a JPEG
+    // data URL the app has already scaled to at most 700 kB.
+    match /trophy-images/{key} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['name', 'dataUrl', 'w', 'h', 'bytes', 'updated'])
+                            && request.resource.data.dataUrl is string
+                            && request.resource.data.dataUrl.matches('^data:image/[a-z]+;base64,.*')
+                            && request.resource.data.dataUrl.size() < 750000;
+      allow delete: if true;
+    }
+
+    // A signed-in member's own profile (authFirebase.js saveProfile). Nobody
+    // else may read it: it carries their name, mobile and handicap.
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Who the admins are. Signed-in accounts may read it so the app can tell
+    // an admin from a member. Only someone already on the list may change it —
+    // except the very first write, when there is no list yet.
+    match /config/admins {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.resource.data.keys().hasOnly(['emails'])
+                   && request.resource.data.emails is list
+                   && (resource == null
+                       || (request.auth.token.email is string
+                           && request.auth.token.email.lower() in resource.data.emails));
+    }
+  }
+}
