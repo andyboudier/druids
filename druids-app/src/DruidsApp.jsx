@@ -1450,31 +1450,51 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const [rostersReady, setRostersReady] = useState(false);
   const scheduleRef = useRef(null);
 
-  // Scroll to the current/nearest fixture when the fixtures tab is opened.
+  // Opening the fixtures tab scrolls to where the season is now: the fixture
+  // on today, else the next one to come, else the last one played. (It used
+  // to pick the one that started most recently, which once a season was over
+  // was its last fixture — the bottom of the list, past the next season.)
   useEffect(() => {
     if (activeTab !== 'fixtures') return;
     const timer = setTimeout(() => {
-      const now = new Date();
-      let targetId = null;
-      let bestDiff = Infinity;
+      const now = Date.now();
+      let current = null;
+      let next = null;
+      let last = null;
       fixtures.forEach(fx => {
         const range = parseFixtureDateRange(fx);
         if (!range) return;
-        const diff = now - range.start;
-        if (diff >= 0 && diff < bestDiff) { bestDiff = diff; targetId = fx.id; }
+        const start = range.start.getTime();
+        const end = range.end.getTime();
+        if (start <= now && now <= end) { if (!current || start > current.start) current = { id: fx.id, start }; }
+        else if (start > now) { if (!next || start < next.start) next = { id: fx.id, start }; }
+        else if (!last || end > last.end) last = { id: fx.id, end };
       });
-      if (!targetId) targetId = fixtures[0]?.id;
-      if (targetId) {
-        const el = document.querySelector('[data-fixture-id="' + targetId + '"]');
-        if (el) {
-          const nav = document.querySelector('.tabs');
-          const navH = nav ? nav.offsetHeight : 44;
-          const top = el.getBoundingClientRect().top + window.pageYOffset - navH - 8;
-          window.scrollTo({ top, behavior: 'smooth' });
-        }
-      }
+      const targetId = (current || next || last || {}).id || fixtures[0]?.id;
+      if (!targetId) return;
+      const el = document.querySelector('[data-fixture-id="' + targetId + '"]');
+      if (!el) return;
+      // The first fixture of a month is shown with its month heading (and a
+      // season's first month with the season's title), so land on that.
+      const block = el.parentElement;
+      const anchor = block && block.querySelector('[data-fixture-id]') === el ? block : el;
+      // Clear the tab bar only where it sits at the top; on a phone it is
+      // the bar along the bottom.
+      const gap = () => {
+        const nav = document.querySelector('.tabs');
+        const r = nav ? nav.getBoundingClientRect() : null;
+        return (r && r.top < 10 ? r.height : 0) + 8;
+      };
+      window.scrollTo({ top: anchor.getBoundingClientRect().top + window.pageYOffset - gap(), behavior: 'smooth' });
+      // The masthead tightens as the page scrolls, which moves everything
+      // under it after the distance was worked out; settle the last bit.
+      settleTimer = setTimeout(() => {
+        const off = anchor.getBoundingClientRect().top - gap();
+        if (Math.abs(off) > 4) window.scrollTo({ top: window.pageYOffset + off, behavior: 'smooth' });
+      }, 800);
     }, 120);
-    return () => clearTimeout(timer);
+    let settleTimer = null;
+    return () => { clearTimeout(timer); clearTimeout(settleTimer); };
   }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Captain PIN — visible in source, this is a soft gate not real security
