@@ -3818,6 +3818,26 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     setFName(''); setFHandicap(''); setFMobile(''); setFEmail('');
   };
 
+  // An event (fx.event — a party, not a tournament) takes Going / Not going
+  // instead of interest. One answer per name: answering again changes it.
+  const answerEvent = (fixtureId, going) => {
+    setFError('');
+    const name = fName.trim();
+    if (!name) return setFError('Please enter your name.');
+    const cleanedEmail = fEmail.trim();
+    if (cleanedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedEmail)) {
+      return setFError('That email address looks off — please double-check.');
+    }
+    const list = interest[fixtureId] || [];
+    const same = (x) => (x.name || '').trim().toLowerCase() === name.toLowerCase();
+    const prev = list.find(same);
+    const entry = { ...(prev || {}), id: prev ? prev.id : Date.now(), name: prev ? prev.name : name, going, answeredAt: Date.now() };
+    if (fMobile.trim()) entry.mobile = fMobile.trim();
+    if (cleanedEmail) entry.email = cleanedEmail;
+    saveInterest({ ...interest, [fixtureId]: prev ? list.map(x => (same(x) ? entry : x)) : [...list, entry] });
+    setFName(''); setFMobile(''); setFEmail('');
+  };
+
   const removeInterest = (fixtureId, entryId) => {
     const list = (interest[fixtureId] || []).filter(p => p.id !== entryId);
     const next = { ...interest };
@@ -3954,8 +3974,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     try { await window.storage.set('fixtures', JSON.stringify(next), true); }
     catch (e) { setFError('Saved locally only — check your connection.'); }
   };
-  const openAddFixture = () => { setFError(''); resetTrophyUi(); setFixtureEditor({ month: MONTHS_ORDER[0], date: '', name: '', level: '', titleLines: [], trophyKey: '' }); };
-  const openEditFixture = (fx) => { setFError(''); resetTrophyUi(); setFixtureEditor({ id: fx.id, month: fx.month, date: fx.date, name: fx.name, level: fx.level || '', titleLines: Array.isArray(fx.titleLines) ? [...fx.titleLines] : [], trophyKey: fx.trophyKey || '' }); };
+  const openAddFixture = () => { setFError(''); resetTrophyUi(); setFixtureEditor({ month: MONTHS_ORDER[0], date: '', name: '', level: '', titleLines: [], trophyKey: '', event: false }); };
+  const openEditFixture = (fx) => { setFError(''); resetTrophyUi(); setFixtureEditor({ id: fx.id, month: fx.month, date: fx.date, name: fx.name, level: fx.level || '', titleLines: Array.isArray(fx.titleLines) ? [...fx.titleLines] : [], trophyKey: fx.trophyKey || '', event: !!fx.event }); };
 
   // ── The trophy photograph ──────────────────────────────────────────────
   // A trophy is played for year after year, so the photo is uploaded once and
@@ -4054,7 +4074,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     if (!ed.date.trim()) { setFError('Please enter a date, e.g. “Sat 30 & Sun 31 May”.'); return; }
     setFError('');
     const titleLines = (ed.titleLines || []).map(s => (s || '').trim()).filter(Boolean).slice(0, MAX_TITLE_LINES);
-    const clean = { month: ed.month, date: ed.date.trim(), name: ed.name.trim(), level: ed.level.trim(), titleLines, trophyKey: (ed.trophyKey || '').trim() };
+    const clean = { month: ed.month, date: ed.date.trim(), name: ed.name.trim(), level: ed.level.trim(), titleLines, trophyKey: (ed.trophyKey || '').trim(), event: !!ed.event };
     let next;
     if (ed.id) {
       next = fixtures.map(f => f.id === ed.id ? { ...f, ...clean } : f);
@@ -4134,6 +4154,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             <input className="input-field" type="text" placeholder="Date e.g. Sat 30 & Sun 31 May" value={fixtureEditor.date} onChange={e => setEd('date', e.target.value)} style={{ flex: 1, minWidth: 0, padding: '12px 14px', fontSize: '14px' }} />
           </div>
           <input className="input-field" type="text" placeholder="Handicap level e.g. −4 to 0 Goal (optional)" value={fixtureEditor.level} onChange={e => setEd('level', e.target.value)} style={{ padding: '12px 14px', fontSize: '15px' }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--ink)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!fixtureEditor.event} onChange={e => setEd('event', e.target.checked)} />
+            This is an event (a party or social, not a tournament) — members answer Going / Not going
+          </label>
           <div style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: 1.45, marginTop: '-2px' }}>
             Put the weekday + day in the date (e.g. “Sat 30 & Sun 31 May”) so team sign-ups and the programme pick up the right days. The handicap level prints on the programme PDF.
           </div>
@@ -7122,7 +7146,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                             <div className="fixture-date">{fx.date}</div>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div className="fixture-name">{fx.name}</div>
-                              {fx.level && <div className="fixture-level">{fx.level}</div>}
+                              {(fx.level || fx.event) && <div className="fixture-level">{fx.event && <span style={{ display: 'inline-block', fontSize: '9px', fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', color: 'var(--cream)', background: 'var(--burgundy)', padding: '1px 6px', borderRadius: '3px', marginRight: fx.level ? '6px' : 0, verticalAlign: '1px' }}>Event</span>}{fx.level}</div>}
                             </div>
                             <div className="fixture-meta">
                               {teamsHere.length > 0 ? (
@@ -7130,7 +7154,12 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                   <div className="fixture-count">{teamsHere.length}</div>
                                   <div>{teamsHere.length === 1 ? 'team' : 'teams'}</div>
                                 </>
-                              ) : registered.length > 0 ? (
+                              ) : fx.event && registered.some(x => x.going !== false) ? (
+                                <>
+                                  <div className="fixture-count">{registered.filter(x => x.going !== false).length}</div>
+                                  <div>going</div>
+                                </>
+                              ) : !fx.event && registered.length > 0 ? (
                                 <>
                                   <div className="fixture-count">{registered.length}</div>
                                   <div>signed up</div>
@@ -7706,7 +7735,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                               })()}
 
                               {/* ── Tournament team sign-up ── */}
-                              <div style={{ paddingTop: '10px' }}>
+                              {!fx.event && (<div style={{ paddingTop: '10px' }}>
                                 <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '6px' }}>Teams Entered</div>
                                 {teamsHere.length === 0 ? (
                                   <div className="display-italic" style={{ fontSize: '13px', color: 'var(--muted)', padding: '2px 0 6px' }}>
@@ -7853,9 +7882,51 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                     ＋ Enter a team for this fixture
                                   </button>
                                 ))}
-                              </div>
+                              </div>)}
 
-                              {registered.length > 0 ? (
+                              {fx.event ? (() => {
+                                const going = registered.filter(x => x.going !== false);
+                                const notGoing = registered.filter(x => x.going === false);
+                                const who = (list, label) => (
+                                  <div style={{ paddingTop: '10px' }}>
+                                    <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '4px' }}>{label} · {list.length}</div>
+                                    {list.length === 0 ? <div className="display-italic" style={{ fontSize: '13px', color: 'var(--muted)' }}>Nobody yet.</div> : list.map(x => (
+                                      <div key={x.id} className="interested-row">
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ fontWeight: 500, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.name}</div>
+                                          {captainMode && (x.mobile || x.email) && (
+                                            <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>{[x.mobile, x.email].filter(Boolean).join(' · ')}</div>
+                                          )}
+                                        </div>
+                                        {captainMode && <button className="remove-btn" onClick={() => removeInterest(fx.id, x.id)} aria-label={`Remove ${x.name}`} style={{ fontSize: '18px' }}>×</button>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                                return (
+                                  <>
+                                    {who(going, 'Going')}
+                                    {notGoing.length > 0 && who(notGoing, 'Not going')}
+                                    {!isPast && (
+                                      <div className="register-form">
+                                        <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '10px' }}>Are you going?</div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                          <input className="input-field" type="text" placeholder="Your name" aria-label="Your name" value={fName} onChange={(e) => setFName(e.target.value)} style={{ padding: '12px 14px', fontSize: '15px' }} />
+                                          <input className="input-field" type="tel" placeholder="Mobile (optional, captain only)" value={fMobile} onChange={(e) => setFMobile(e.target.value)} style={{ padding: '12px 14px', fontSize: '15px' }} />
+                                          {fError && (
+                                            <div style={{ fontSize: '12px', color: 'var(--danger)', padding: '8px 12px', background: '#fbf2f2', borderRadius: '4px', borderLeft: '3px solid var(--danger)' }}>{fError}</div>
+                                          )}
+                                          <div style={{ display: 'flex', gap: '8px' }}>
+                                            <button className="btn-primary" onClick={() => answerEvent(fx.id, true)} style={{ flex: 1, padding: '13px', fontSize: '12px' }}>Going</button>
+                                            <button onClick={() => answerEvent(fx.id, false)} style={{ flex: 1, background: 'transparent', border: '1px solid var(--line)', color: 'var(--ink)', padding: '13px', borderRadius: '4px', fontSize: '12px', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', cursor: 'pointer' }}>Not going</button>
+                                          </div>
+                                          <div style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: 1.45 }}>Your name shows on the list; your mobile only to the captain. Changed your mind? Answer again with the same name.</div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })() : registered.length > 0 ? (
                                 <div style={{ paddingTop: '10px' }}>
                                   <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '4px' }}>Registered Interest</div>
                                   {registered.map(p => (
@@ -7892,7 +7963,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
                               {/* Past fixtures no longer take sign-ups: the whole
                                   register-interest form is hidden once the fixture is over. */}
-                              {isPast ? null : !isTournamentActive(fx) ? (
+                              {fx.event || isPast ? null : !isTournamentActive(fx) ? (
                               <div className="register-form">
                                 <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '10px' }}>Register your interest</div>
                                 {(() => {
