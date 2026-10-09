@@ -266,7 +266,7 @@ export const groupShort = (slot, start, hours) => {
 // ARE — their names, their length, their places and above all their price —
 // stays in the app, exactly as the rate card does and for the same reason:
 // they are one club's, and a shared list would put another club's name or
-// another club's price on somebody's invoice. This module only knows that a
+// another club's price on somebody's bill. This module only knows that a
 // session is booked whole.
 //
 // Nothing here is tied to a weekday. The captain puts a session on whatever
@@ -340,11 +340,6 @@ export const findBooking = (slots, bookingId) => {
   }
   return null;
 };
-
-// A token buys an hour of coaching, whatever kind. Deliberately blunt: tokens
-// are a stand-in until Stripe, and a rate card inside a currency would have to
-// be unpicked again later.
-export const tokenCost = (hours) => Math.max(1, Number(hours) || 1);
 
 // ── The week ────────────────────────────────────────────────────────────────
 

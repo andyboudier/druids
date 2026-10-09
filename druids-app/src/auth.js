@@ -45,6 +45,7 @@
 //                                  project hides it; see accountLink.js
 //   signOut()
 //   saveProfile({ name, handicap, mobile, hpa })
+//   acceptTerms(version)           records acceptance of the booking terms on the profile
 //   listAdmins() → [email]         admins only
 //   setAdmins([email])             admins only
 //
@@ -75,6 +76,7 @@ export const noAuth = {
   existingMethodsFor: async () => [],
   signOut: async () => {},
   saveProfile: notEnabled,
+  acceptTerms: notEnabled,
   listAdmins: async () => [],
   setAdmins: notEnabled,
 };
@@ -94,6 +96,7 @@ export const authSnapshot = () => {
     user: a.user || null,
     role: a.role || 'anon',
     profile: a.profile || null,
+    profileReady: a.profileReady !== false,
     // Admins fixed by the deployment's configuration, never removable in-app.
     fixedAdmins: (a.fixedAdmins || []).map((e) => String(e).toLowerCase()),
   };

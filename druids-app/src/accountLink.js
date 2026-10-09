@@ -127,11 +127,11 @@ export function mergeConflicts(primary, other) {
 }
 
 // Fold `other` into `primary`. The primary's id survives, because rosters,
-// waiting lists and transactions already point at it; the other record is the
+// waiting lists and lesson bookings already point at it; the other record is the
 // caller's to delete once this returns.
 //
 // Anything the primary is missing is taken from the other, so a merge never
-// loses a detail. Tokens add up — both were paid for. Subsidies union. Where
+// loses a detail. Subsidies union. Where
 // both records say something different the primary wins, and mergeConflicts()
 // is what lets a captain see that before agreeing to it.
 export function mergePlayers(primary, other) {
@@ -154,8 +154,6 @@ export function mergePlayers(primary, other) {
     ...(Array.isArray(primary.subsidies) ? primary.subsidies : []),
     ...(Array.isArray(other.subsidies) ? other.subsidies : []),
   ]));
-  // Both were paid for.
-  out.tokens = (Number(primary.tokens) || 0) + (Number(other.tokens) || 0);
   // Active if either side was: the live record is the one that matters, and an
   // old archived duplicate must not archive them.
   out.active = primary.active !== false || other.active !== false;
