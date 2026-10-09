@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
+import { TermsLine } from './TermsSheet';
 import {
   MIN_GROUP, MAX_GROUP,
   addDays, availableSessions, blankSlot, blockedReason, bookingsFor, bySlotTime,
   copyWeek, dateLabel, dayLabel, groupBookings, mondayOf, newSlotId, normaliseSlot,
-  parseHM, parseISO, rangeLabel, removeBooking, slotsOn, tokenCost, weekDays,
+  parseHM, parseISO, rangeLabel, removeBooking, slotsOn, weekDays,
   windowHours, isoOf,
   isClubSession, clubSessionBookings, clubSessionPlaces, clubSessionSpots,
   clubSessionBlockedReason, fmtHM,
@@ -22,7 +23,7 @@ import {
 // catalogue comes in as `clubSessions`, because the names and the prices are
 // each club's own; a club that passes none simply never sees any of it.
 //
-// Money and tokens stay with the app (it knows the rates, who is military and
+// Money stays with the app (it knows the rates, who is military and
 // which subsidy pots apply); this component asks for a quote and reports a
 // booking back.
 
@@ -66,7 +67,7 @@ const TYPE_LABEL = { individual: 'Individual', group: 'Group', session: 'Place' 
 
 // ── The sheet that takes a booking ──────────────────────────────────────────
 
-function BookSheet({ slot, session, who, canPickPlayer, players, quote, tokensOf, onCancel, onConfirm }) {
+function BookSheet({ slot, session, who, canPickPlayer, players, quote, onCancel, onConfirm, onOpenTerms }) {
   const [playerId, setPlayerId] = useState(who ? who.id : '');
   const [pony, setPony] = useState(slot.ponyHireDefault !== false);
   const [busy, setBusy] = useState(false);
@@ -76,9 +77,6 @@ function BookSheet({ slot, session, who, canPickPlayer, players, quote, tokensOf
   const withPony = quote(player, session.type, session.hours, true);
   const without = quote(player, session.type, session.hours, false);
   const chosen = pony ? withPony : without;
-  const tokens = tokensOf(player);
-  const cost = tokenCost(session.hours);
-  const payingWithTokens = tokens >= cost;
 
   const go = async () => {
     if (!player) { setError('Pick who the lesson is for.'); return; }
@@ -131,19 +129,18 @@ function BookSheet({ slot, session, who, canPickPlayer, players, quote, tokensOf
 
       <div style={{ ...S.hint, marginTop: '8px' }}>
         {player
-          ? payingWithTokens
-            ? `${player.name} has ${tokens} token${tokens === 1 ? '' : 's'} — this uses ${cost}, leaving ${tokens - cost}.`
-            : `${player.name} has ${tokens} token${tokens === 1 ? '' : 's'}, so this goes on their invoice at £${chosen.money}.`
-          : 'Pick a player to see how it will be paid.'}
+          ? `£${chosen.money}, payable by card once online payment is live — nothing is taken now.`
+          : 'Pick a player to see what it costs.'}
       </div>
 
       <div style={{ ...S.row, marginTop: '12px' }}>
         <button type="button" className="btn-primary" disabled={busy || !player} onClick={go}
           style={{ padding: '11px 18px', fontSize: '12px', opacity: busy || !player ? 0.6 : 1 }}>
-          {busy ? 'Booking…' : payingWithTokens ? `Book — ${cost} token${cost === 1 ? '' : 's'}` : `Book — £${chosen.money}`}
+          {busy ? 'Booking…' : `Book — £${chosen.money}`}
         </button>
         <button type="button" style={S.btn} disabled={busy} onClick={onCancel}>Cancel</button>
       </div>
+      <TermsLine onOpen={onOpenTerms} style={{ marginTop: '8px', color: 'var(--muted)' }} />
       {error && <div style={S.err}>{error}</div>}
     </div>
   );
@@ -152,11 +149,11 @@ function BookSheet({ slot, session, who, canPickPlayer, players, quote, tokensOf
 // ── The sheet that takes a place in a club session ──────────────────────────
 //
 // Deliberately not the lesson sheet with bits hidden. There is no length to
-// choose, no individual-or-group, and no token line — a place is the whole
-// evening and it goes on the invoice — so a sheet that showed those switched
+// choose and no individual-or-group — a place is the whole evening at one
+// price — so a sheet that showed those switched
 // off would only invite the question of how to switch them on.
 
-function SessionSheet({ slot, kind, who, canPickPlayer, players, quote, onCancel, onConfirm }) {
+function SessionSheet({ slot, kind, who, canPickPlayer, players, quote, onCancel, onConfirm, onOpenTerms }) {
   const [playerId, setPlayerId] = useState(who ? who.id : '');
   const [pony, setPony] = useState(slot.ponyHireDefault !== false);
   const [busy, setBusy] = useState(false);
@@ -229,7 +226,7 @@ function SessionSheet({ slot, kind, who, canPickPlayer, players, quote, onCancel
       <div style={{ ...S.hint, marginTop: '8px' }}>
         {player
           ? chosen.total > 0
-            ? `£${chosen.money} goes on ${player.name}'s invoice, settled from Payments.`
+            ? `£${chosen.money}, payable by card once online payment is live — nothing is taken now.`
             : `Nothing to pay — ${player.name}'s membership covers it.`
           : 'Pick a player to see what it costs.'}
       </div>
@@ -241,6 +238,7 @@ function SessionSheet({ slot, kind, who, canPickPlayer, players, quote, onCancel
         </button>
         <button type="button" style={S.btn} disabled={busy} onClick={onCancel}>Cancel</button>
       </div>
+      <TermsLine onOpen={onOpenTerms} style={{ marginTop: '8px', color: 'var(--muted)' }} />
       {error && <div style={S.err}>{error}</div>}
     </div>
   );
@@ -448,7 +446,6 @@ function SessionCard({ slot, kind, captainMode, onPick, onEdit, onRemoveBooking 
             <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '3px 0' }}>
               <span style={{ flex: 1 }}>
                 {b.name}{b.ponyHire ? ' · pony hire' : ' · own pony'}
-                <span style={{ color: 'var(--muted)' }}>{b.paid === 'invoice' ? ' · invoiced' : ''}</span>
               </span>
               <button type="button" className="remove-btn" title={`Take ${b.name} off`} onClick={() => onRemoveBooking(slot, b)}>×</button>
             </div>
@@ -522,7 +519,6 @@ function SlotCard({ slot, filter, rates, captainMode, onPick, onEdit, onRemoveBo
               <span style={{ flex: 1 }}>
                 {b.name} · {rangeLabel(b.start, Number(b.hours) || 1)} · {TYPE_LABEL[b.type]}
                 {b.ponyHire ? ' · pony hire' : ' · own pony'}
-                <span style={{ color: 'var(--muted)' }}>{b.paid === 'token' ? ` · ${b.tokensSpent || 1} token` : b.paid === 'invoice' ? ' · invoiced' : ''}</span>
               </span>
               <button type="button" className="remove-btn" title={`Take ${b.name} off`} onClick={() => onRemoveBooking(slot, b)}>×</button>
             </div>
@@ -537,7 +533,8 @@ function SlotCard({ slot, filter, rates, captainMode, onPick, onEdit, onRemoveBo
 
 export default function LessonsBoard({
   slots, onSaveSlots, captainMode, canBookAsSelf, myPlayer, players, rates,
-  quote, tokensOf, onBook, onCancelBooking,
+  onOpenTerms = null,
+  quote, onBook, onCancelBooking,
   clubSessions = [], quoteSession, onBookSession,
 }) {
   const today = isoOf(new Date());
@@ -685,7 +682,7 @@ export default function LessonsBoard({
         <SessionSheet
           slot={taking} kind={kindOf(taking)}
           who={myPlayer} canPickPlayer={captainMode} players={players}
-          quote={quoteSession}
+          quote={quoteSession} onOpenTerms={onOpenTerms}
           onCancel={() => setTaking(null)} onConfirm={confirmPlace} />
       )}
 
@@ -693,7 +690,7 @@ export default function LessonsBoard({
         <BookSheet
           slot={picking.slot} session={picking.session}
           who={myPlayer} canPickPlayer={captainMode} players={players}
-          quote={quote} tokensOf={tokensOf}
+          quote={quote} onOpenTerms={onOpenTerms}
           onCancel={() => setPicking(null)} onConfirm={confirmBooking} />
       )}
 

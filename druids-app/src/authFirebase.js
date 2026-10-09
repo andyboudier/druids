@@ -168,6 +168,17 @@ const provider = {
     provider.profile = clean;
     announceAuthChange();
   },
+  // The member's acceptance of the club's booking terms (terms.js): the
+  // version and when. On the private profile, and it leaves `updated` alone —
+  // it is not part of the profile ↔ record reconcile.
+  async acceptTerms(version) {
+    needAuth();
+    if (!provider.user) throw new Error('Sign in first.');
+    const v = { termsVersion: String(version || ''), termsAcceptedAt: Date.now() };
+    await setDoc(doc(db, 'users', provider.user.uid), v, { merge: true });
+    provider.profile = { ...(provider.profile || {}), ...v };
+    announceAuthChange();
+  },
   async listAdmins() {
     needAuth();
     const snap = await getDoc(doc(db, ...ADMINS_DOC));
@@ -253,11 +264,15 @@ const watchAdmins = () => {
 
 const watchProfile = (uid) => {
   if (stopProfileWatch) { stopProfileWatch(); stopProfileWatch = null; }
+  // profileReady says the first read has come back, so "no profile" means
+  // none rather than "not loaded yet" (the terms prompt waits on it).
+  provider.profileReady = false;
   if (!uid) { provider.profile = null; return; }
   stopProfileWatch = onSnapshot(doc(db, 'users', uid), (snap) => {
     provider.profile = snap.exists() ? snap.data() : null;
+    provider.profileReady = true;
     announceAuthChange();
-  }, () => { provider.profile = null; announceAuthChange(); });
+  }, () => { provider.profile = null; provider.profileReady = true; announceAuthChange(); });
 };
 
 // Finish an email-link sign-in if this page load is one.
