@@ -12,6 +12,18 @@ import DruidsApp from './DruidsApp.jsx';
 // without touching firebase/auth, so the ordinary cold start is unchanged.
 if (signInReturning()) installClubAuth();
 
+// Vercel Web Analytics: page views and visitor counts, no cookies, nothing
+// personal. Only on the web — the native app is served from its own bundle
+// with no Vercel behind it — and it does nothing until Web Analytics is
+// switched on for the project in the Vercel dashboard (the script 404s
+// quietly until then). Numbers are read in Vercel → the project → Analytics.
+if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  const va = document.createElement('script');
+  va.defer = true; va.src = '/_vercel/insights/script.js';
+  document.head.appendChild(va);
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <DruidsApp />
