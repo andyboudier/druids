@@ -13,10 +13,17 @@ import LessonsBoard from './LessonsBoard';
 import TermsSheet, { TermsLine } from './TermsSheet';
 import RateCardEditor from './RateCardEditor';
 import { TERMS_VERSION } from './terms';
-import { useAuth } from './auth';
+import { useAuth, authErrorText } from './auth';
 import SignInTest from './SignInTest';
+import AuthSheet, { AdminsPanel } from './AuthSheet';
 import { matchPlayer, duplicatesOf, mergePlayers, mergeConflicts, providerUnion, providerSentence, normEmail, MATCH_LABEL } from './accountLink';
-import { normaliseSlots, removeBooking as removeLessonBooking, addBooking as addLessonBooking } from './lessons';
+import HomeDashboard from './HomeDashboard';
+import AuthActionPage from './AuthActionPage';
+import { emailAction as readEmailAction, clearEmailAction } from './emailAction';
+import { LUX_CSS } from './luxTheme';
+import { bookingEmail, manageRequest, clearManageRequest } from './bookingEmail';
+import { hadSignIn, noteSignIn, isMine, mySlots, isEntered, upcomingFixtures, membershipShort, photoOf } from './home';
+import { normaliseSlots, removeBooking as removeLessonBooking, addBooking as addLessonBooking, isoOf, mondayOf, slotsInWeek, groupBookings as lessonGroupBookings, runAsSmallerGroup, groupToIndividual, windowHours, bookingsFor as lessonBookingsFor, dateLabel as lessonDateLabel } from './lessons';
 import {
   trophyKeyFor, loadTrophyIndex, loadTrophyImage, saveTrophyImage,
   deleteTrophyImage, prepareTrophyImage,
@@ -329,9 +336,17 @@ const fmtPence = (p) => `£${(p / 100).toFixed(2)}`;
 const VIEW_STATE_KEY = 'dlpc-view';
 const VIEW_STATE_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
 // Tabs only a captain may sit on: a restore or a locked PIN bounces off these
-// back to Chukkas. 'lessons' belongs here too — without it, locking the PIN
-// while in the lessons diary left you there.
-const CAPTAIN_ONLY_TABS = ['shop', 'players', 'teams', 'lessons', 'rates'];
+// back to Home.
+const CAPTAIN_ONLY_TABS = ['shop', 'players', 'teams', 'rates'];
+// TPPC sells club sessions from Lessons; this club has none, so the Home
+// and Lessons code that asks about them finds an empty catalogue.
+const CLUB_SESSIONS = [];
+const clubSessionById = (id) => CLUB_SESSIONS.find(k => k.id === id) || null;
+// Tabs that appear once a member has signed in (or the captain PIN is on):
+// signed out, the bar is Home, Fixtures, Live and More, and Home is the
+// sign-in screen. Lessons is the diary for a captain and a booking page for
+// a member.
+const MEMBER_TABS = ['chukkas', 'lessons'];
 // More itself is not captain-only — a member opens it to find the PIN — but it
 // stays lit while you are inside any captain area.
 const CAPTAIN_TABS = ['more', ...CAPTAIN_ONLY_TABS];
@@ -1083,11 +1098,11 @@ export default function DruidsApp() {
   // The chukka days now live on their own menu inside the 'chukkas' tab.
   const [activeTab, setActiveTab] = useState(() => {
     const tab = restoredView && restoredView.activeTab;
-    if (!tab) return 'chukkas';
+    if (!tab) return 'home';
     // Don't restore a captain-only tab unless the captain flag is present.
     let isCaptain = false;
     try { isCaptain = sessionStorage.getItem('dlpc-captain') === '1'; } catch (e) {}
-    if (CAPTAIN_ONLY_TABS.includes(tab) && !isCaptain) return 'chukkas';
+    if (CAPTAIN_ONLY_TABS.includes(tab) && !isCaptain) return 'home';
     return tab;
   });
   // Which chukka day is being viewed/booked within the Chukkas tab.
@@ -1115,10 +1130,9 @@ export default function DruidsApp() {
   // The club notice under the tab bar — one message, normal or important.
   // See notices.js.
   const [notice, setNotice] = useState(null);
-  // Coaching windows and their bookings — see lessons.js. Captain-only for
-  // now; the tab is gated below.
+  // Lessons and club sessions with their bookings — see lessons.js.
   const [lessonSlots, setLessonSlots] = useState([]);
-  // The captains' changes to the printed rate card (see mergeRateCard). RATES
+  // The admins' changes to the printed rate card (see mergeRateCard). RATES
   // is set from it on every render, before anything prices.
   const [rateCardDoc, setRateCardDoc] = useState(null);
   RATES = useMemo(() => mergeRateCard(rateCardDoc), [rateCardDoc]);
@@ -1267,6 +1281,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // Fixtures state
   const [interest, setInterest] = useState({}); // { [fixtureId]: [{ id, name, handicap, mobile?, email? }] }
   const [expandedId, setExpandedId] = useState(null);
+  // Admins' "Previous seasons" fold on the Fixtures tab; members never see
+  // a finished season (see fixtureMonths).
+  const [showFixtureArchive, setShowFixtureArchive] = useState(false);
   const [fName, setFName] = useState('');
   const [fHandicap, setFHandicap] = useState('');
   const [fMobile, setFMobile] = useState('');
@@ -1414,9 +1431,95 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     const rec = playerDb.find(p => normEmail(p.email) === em);
     return (rec && rec.authProviders) || [];
   };
-  const [captainMode, setCaptainMode] = useState(() => {
+  // The captain PIN. With sign-in off it is the only key to the club and
+  // opens everything. With sign-in on it opens live scoring only, and the
+  // management side belongs to admins — see auth.js.
+  const [pinUnlocked, setPinUnlocked] = useState(() => {
     try { return sessionStorage.getItem('dlpc-captain') === '1'; } catch (e) { return false; }
   });
+  const isAdmin = auth.enabled && auth.role === 'admin';
+  const isMember = auth.enabled && !!auth.user;
+  // "Captain mode" throughout the app means the management side: rosters,
+  // the draw, players, tournaments, shop. It keeps its old name because it
+  // gates a great deal of the interface.
+  //
+  // A build with sign-in switched on never lets the PIN stand in for an
+  // admin — not even for the moment before the sign-in code has loaded,
+  // when `auth.enabled` still reads false.
+  const signInBuild = auth.enabled || import.meta.env.VITE_SIGN_IN_LIVE === '1';
+  const captainMode = signInBuild ? isAdmin : pinUnlocked;
+  // Entering scores on the live tab: the PIN, or an admin.
+  const canScore = pinUnlocked || isAdmin;
+  const [authSheetOpen, setAuthSheetOpen] = useState(false);
+  const [authSheetStart, setAuthSheetStart] = useState(undefined);
+  const openSignIn = (at) => { setAuthSheetStart(at); setAuthSheetOpen(true); };
+
+  const teamKey = (t) => (t || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const teammates = myPlayer && teamKey(myPlayer.team)
+    ? playerDb
+      .filter(p => p.id !== myPlayer.id && p.active !== false && teamKey(p.team) === teamKey(myPlayer.team))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    : [];
+  // Booking as a member (sign-in on, not an admin): the form is for yourself
+  // or a teammate, chosen from a list, never a name typed in.
+  const memberBooking = auth.enabled && isMember && !captainMode;
+  const [bookingFor, setBookingFor] = useState('me'); // 'me' | a teammate's player id
+  const myName = (myPlayer && myPlayer.name) || (auth.profile && auth.profile.name) || (auth.user && auth.user.displayName) || '';
+  // What goes in the form for whoever is being booked.
+  const detailsFor = (who) => {
+    const rec = who === 'me' ? null : teammates.find(t => t.id === who);
+    const src = rec || myPlayer || auth.profile || {};
+    return {
+      name: src.name || '',
+      handicap: src.handicap == null || src.handicap === '' ? '' : String(src.handicap),
+      mobile: src.mobile || '',
+    };
+  };
+  // A member may take off a list anyone they could have put on it: themselves
+  // and their teammates, however the entry got there. Entries booked since
+  // sign-in carry a playerId; older ones, and anything a captain typed, fall
+  // back to matching the name against the club's own record of the team.
+  const sameName = (a, b) => {
+    const n = (x) => (x || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return !!n(a) && n(a) === n(b);
+  };
+  const entryIsMe = (p) => !!(p && myPlayer && (p.playerId === myPlayer.id || (!p.playerId && sameName(p.name, myPlayer.name))));
+  const entryIsTeammate = (p) => !!(p && teammates.some(t => p.playerId === t.id || (!p.playerId && sameName(p.name, t.name))));
+  const canRemoveEntry = (p) => {
+    if (!auth.enabled || !auth.user || !p) return false;
+    if (p.uid === auth.user.uid) return true;   // whoever put it there may take it off
+    return entryIsMe(p) || entryIsTeammate(p);
+  };
+  // Taking your own name off is unremarkable; taking a teammate's off is worth
+  // a moment's pause, since they are not the one tapping.
+  const removeWithCare = (p, remove) => {
+    if (!p || entryIsMe(p) || sameName(p.name, myName)) return remove();
+    setConfirmModal({
+      title: `Take ${p.name} off?`,
+      message: `This removes ${p.name} from the ${activeDayConfig.fullLabel} list. They are in your team, so you can put them back on afterwards.`,
+      confirmLabel: 'Take them off',
+      onConfirm: remove,
+    });
+  };
+
+  // Who the admins are, for the player database's Admin switch and tag. The
+  // list lives with the sign-in provider (config/admins in Firestore), not on
+  // the player records; it is read here only by an admin, who alone may
+  // change it. Re-read whenever the Players tab changes view.
+  const [adminEmails, setAdminEmails] = useState(null);
+  const fixedAdminEmails = auth.fixedAdmins || [];
+  useEffect(() => {
+    if (!auth.enabled || !isAdmin) { setAdminEmails(null); return; }
+    let live = true;
+    window.auth.listAdmins()
+      .then(list => { if (live) setAdminEmails(list.map(e => String(e).toLowerCase())); })
+      .catch(() => { if (live) setAdminEmails([]); });
+    return () => { live = false; };
+  }, [auth.enabled, isAdmin, playersView]);
+  const isAdminEmail = (email) => {
+    const e = (email || '').trim().toLowerCase();
+    return !!e && (fixedAdminEmails.includes(e) || (adminEmails || []).includes(e));
+  };
 
   // What members are allowed to see. A fixture's match details stay private
   // until the captain publishes them, so a draw can be built without going live.
@@ -1429,24 +1532,6 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
   const [privacyOpen, setPrivacyOpen] = useState(false);
-  // ── The booking terms (terms.js, TermsSheet.jsx) ───────────────────────
-  // Read from the footer, any booking screen, or a link (?terms=1). With
-  // sign-in on, a member accepts them once — the version and the moment go
-  // on their profile — and again whenever TERMS_VERSION changes; until then
-  // the accept screen stands in front of the app. Sign-in is off for the
-  // club, so today only the reading side applies.
-  const [termsOpen, setTermsOpen] = useState(() => {
-    try { return new URL(window.location.href).searchParams.get('terms') === '1'; } catch (e) { return false; }
-  });
-  useEffect(() => {
-    try {
-      const url = new URL(window.location.href);
-      if (url.searchParams.has('terms')) { url.searchParams.delete('terms'); window.history.replaceState(null, '', url.pathname + url.search + url.hash); }
-    } catch (e) { /* nothing to tidy */ }
-  }, []);
-  const openTerms = () => setTermsOpen(true);
-  const needTerms = !!(auth.enabled && auth.ready && auth.user && auth.profileReady
-    && !(auth.profile && auth.profile.termsVersion === TERMS_VERSION));
   const [liveFixtureId, setLiveFixtureId] = useState(() => (restoredView && restoredView.liveFixtureId) || null);
   const [liveDayId, setLiveDayId] = useState(() => (restoredView && restoredView.liveDayId) || null);
   const [liveMatchId, setLiveMatchId] = useState(() => (restoredView && restoredView.liveMatchId) || null);
@@ -1476,6 +1561,14 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   }, [activeTab, activeDay, liveDate, liveFixtureId, liveDayId, liveMatchId]);
 
   // On first open of the Live Game tab, auto-select today's date — and the
+  // The player record a booking belongs to: the id it carries, else the
+  // record with its name — for the email that tells them it has gone.
+  const playerIdFor = (entry) => {
+    if (!entry) return null;
+    if (entry.playerId != null) return entry.playerId;
+    const rec = playerDb.find(x => sameName(x.name, entry.name));
+    return rec ? rec.id : null;
+  };
   // tournament too if only one runs today — so the live game is right there
   // without hunting through the dropdowns. Only fires once, and never overrides
   // a selection that's already been made.
@@ -1577,6 +1670,15 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // Captain mode always bypasses the cutoff.
   const CONTACT_EMAIL = 'abi@druidspolo.co.uk';
 
+  // Why a day is not taking names, or '' when it is: 'closed' (the captain
+  // shut it), 'cutoff' (past the deadline). This club has no session cap,
+  // so never 'full'.
+  const bookingBlock = (dayKey = activeDay) => {
+    if (manualClosed[dayKey]) return 'closed';
+    if (manualOpen[dayKey] && manualOpen[dayKey] === currentDayISO(dayKey)) return '';
+    return Date.now() >= cutoffTime(dayKey) ? 'cutoff' : '';
+  };
+  const signupCap = () => null;
   const isBookingClosed = (dayKey = activeDay) => {
     if (manualClosed[dayKey]) return true; // captain closed it manually (e.g. full)
     // Captain has explicitly opened THIS session past its cutoff. Compared
@@ -1698,7 +1800,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // Check session storage on mount — captain mode persists until tab closes
   useEffect(() => {
     try {
-      if (sessionStorage.getItem('dlpc-captain') === '1') setCaptainMode(true);
+      if (sessionStorage.getItem('dlpc-captain') === '1') setPinUnlocked(true);
     } catch (e) {}
   }, []);
 
@@ -1710,7 +1812,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
 
   const submitPin = () => {
     if (pinInput === CAPTAIN_PIN) {
-      setCaptainMode(true);
+      setPinUnlocked(true);
       try { sessionStorage.setItem('dlpc-captain', '1'); } catch (e) {}
       setPinModalOpen(false);
       setPinInput('');
@@ -1722,11 +1824,44 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   };
 
   const lockCaptainMode = () => {
-    setCaptainMode(false);
-    // Bounce off any captain-only tab back to the chukka booking pages
-    setActiveTab(prev => (['players', 'teams', 'shop'].includes(prev) ? 'chukkas' : prev));
+    setPinUnlocked(false);
+    // Bounce off any captain-only tab back to Home
+    if (!(auth.enabled && auth.role === 'admin')) {
+      setActiveTab(prev => (['players', 'teams', 'shop'].includes(prev) ? 'home' : prev));
+    }
     try { sessionStorage.removeItem('dlpc-captain'); } catch (e) {}
   };
+
+  // Losing management access — an admin signing out, or the PIN locking —
+  // must not leave someone on a management tab.
+  useEffect(() => {
+    if (!captainMode) setActiveTab(prev => (CAPTAIN_ONLY_TABS.includes(prev) ? 'home' : prev));
+  }, [captainMode]);
+
+  // A signed-in member books as themselves, or a teammate: the form carries
+  // what the player database (or, failing that, their profile) says about
+  // whoever is chosen. Handicap and mobile stay editable for the day.
+  useEffect(() => {
+    if (!memberBooking) return;
+    if (bookingFor !== 'me' && !teammates.some(t => t.id === bookingFor)) { setBookingFor('me'); return; }
+    const d = detailsFor(bookingFor);
+    setName(d.name); setHandicap(d.handicap); setMobile(d.mobile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberBooking, bookingFor, myPlayer && myPlayer.id, auth.profile && auth.profile.name, auth.user && auth.user.uid]);
+
+  // A first sign-in by somebody the club has no record of: ask once for a
+  // name and handicap, since that is what the chukka list needs. Anyone the
+  // club does know is never asked — the reconcile fills their profile in.
+  const askedProfileFor = useRef(null);
+  useEffect(() => {
+    if (!auth.enabled || !auth.ready || !auth.user || !loaded) return;
+    if (auth.profile && auth.profile.name) return;
+    if (myPlayer && myPlayer.name) return;
+    if (askedProfileFor.current === auth.user.uid) return;
+    askedProfileFor.current = auth.user.uid;
+    openSignIn('profile');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.enabled, auth.ready, auth.user && auth.user.uid, auth.profile, myPlayer, loaded]);
 
   // Hard refresh — clears caches and busts iOS's web-clip HTML cache.
   // Used by the manual refresh button and the prolonged-hidden listener below.
@@ -2126,43 +2261,114 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     catch (err) { setError('Lessons saved on this device only — check your connection.'); }
   };
 
-  // What a lesson costs, with and without a pony. Pony hire is charged per
-  // hour, as it is per chukka elsewhere: a lesson needs a fresh pony the same
-  // way a chukka does. Subsidy pots come off the coaching, not the pony.
-  const quoteLesson = (player, type, hours, ponyHire, ponyLevel) => {
+  // What a lesson costs. The rate card's lesson prices include a club pony;
+  // on the rider's own pony it is the own-pony rate (£45 civilian / £40
+  // military an hour). `ponyHire` on the booking also tells the yard what to
+  // have ready. Subsidy pots come off the coaching.
+  const quoteLesson = (player, type, hours, ponyHire) => {
     const h = Math.max(1, Number(hours) || 1);
     const rateId = (LESSON_SLOT_RATES[type] || LESSON_SLOT_RATES.individual)[h];
     if (!rateId) return { blocked: `No ${h}-hour ${type} rate.`, money: '—', total: 0, detail: '' };
     const lt = lessonById(rateId);
-    const priced = player ? priceLesson(player, lt.id) : { lessonLabel: lt.label, base: lt.civ, subsidyDeductions: [], total: lt.civ };
-    const level = ponyLevel || 'club';
-    const pony = ponyHire ? (RATES.ponyHire[level] != null ? RATES.ponyHire[level] : RATES.ponyHire.club) * h : 0;
-    const total = Math.max(0, priced.total + pony);
+    const ownPony = !ponyHire && !!lt.own;
+    const guest = ownPony ? lt.own.civ : lt.civ;
+    const priced = player ? priceLesson(player, lt.id, ownPony) : { lessonLabel: lt.label, base: guest, subsidyDeductions: [], total: guest };
+    const total = Math.max(0, priced.total);
     const bits = [`${lt.label} £${fmtMoney(priced.base)}`];
-    if (pony) bits.push(`pony hire £${fmtMoney(pony)} (${h} hr)`);
+    bits.push(ponyHire ? 'club pony included' : 'own pony');
     (priced.subsidyDeductions || []).filter(d => d.amount > 0).forEach(d => bits.push(`${d.name} −£${fmtMoney(d.amount)}`));
-    return { lessonId: lt.id, lessonLabel: lt.label, base: priced.base, pony,
+    return { lessonId: lt.id, lessonLabel: ownPony ? `${lt.label} · own pony` : lt.label, base: priced.base, pony: 0, ownPony,
              subsidyDeductions: priced.subsidyDeductions || [], total,
              money: fmtMoney(total), detail: bits.join(' · ') };
   };
 
+  // Who a member may book a lesson for: themselves or a teammate.
+  const mayBookFor = (player) => captainMode || (!!player && (
+    (myPlayer && player.id === myPlayer.id) || teammates.some(t => t.id === player.id)));
+
   // Book a lesson. The price is shown and the place accepted; nothing is
   // charged until card payment is live.
-  const bookLesson = async ({ slot, session, player, ponyHire }) => {
+  //
+  // A group lesson can take several people at once — a member booking their
+  // team, as they can for chukkas. They go into the slot in ONE write (one by
+  // one, each write would start from the same stale copy and only the last
+  // would stick), and each person booked gets their own confirmation email,
+  // which says who booked them.
+  const bookLesson = async ({ slot, session, player, players, ponyHire }) => {
+    const people = (players && players.length ? players : [player]).filter(Boolean);
+    if (!people.length) return { error: 'Pick who the lesson is for.' };
+    const refused = people.find(p => !mayBookFor(p));
+    if (refused) return { error: `You can book yourself or someone on your team — not ${refused.name}.` };
+    if (people.length > 1 && session.type !== 'group') return { error: 'An individual lesson is for one rider.' };
     const hours = Math.max(1, Number(session.hours) || 1);
-    const bd = quoteLesson(player, session.type, hours, ponyHire);
-    const res = addLessonBooking(slot, {
-      playerId: player.id, name: player.name, start: session.start, hours,
-      type: session.type, ponyHire: !!ponyHire,
-      uid: '', bookedBy: '',
-    }, LESSON_SLOT_RATES);
-    if (!res.ok) return { error: res.error };
-    await saveLessonSlots(lessonSlots.map(s => (s.id === slot.id ? res.slot : s)));
-    return { message: bd.total > 0 ? `Booked for ${player.name} — £${bd.money}, payable by card once online payment is live.` : `Booked for ${player.name}.` };
+    let next = lessonSlots.find(s => s.id === slot.id) || slot;
+    const booked = [];
+    const skipped = [];
+    for (const p of people) {
+      const res = addLessonBooking(next, {
+        playerId: p.id, name: p.name, start: session.start, hours,
+        type: session.type, ponyHire: !!ponyHire,
+        uid: (auth.user && auth.user.uid) || '', bookedBy: myName || '',
+      }, LESSON_SLOT_RATES);
+      if (!res.ok) { skipped.push(`${p.name}: ${res.error}`); continue; }
+      next = res.slot;
+      booked.push({ p, booking: res.booking, bd: quoteLesson(p, session.type, hours, ponyHire) });
+    }
+    if (!booked.length) return { error: skipped.join(' ') || 'That lesson could not be booked.' };
+    await saveLessonSlots(lessonSlots.map(s => (s.id === slot.id ? next : s)));
+    booked.forEach(({ booking }) => bookingEmail({ event: 'booked', kind: 'lesson', slotId: slot.id, bookingId: booking.id }));
+    const pay = 'payable by card once online payment is live';
+    if (booked.length === 1) {
+      const { p, bd } = booked[0];
+      const one = bd.total > 0 ? `Booked for ${p.name} — £${bd.money}, ${pay}.` : `Booked for ${p.name}.`;
+      return { message: skipped.length ? `${one} Not booked: ${skipped.join(' ')}` : one };
+    }
+    const total = booked.reduce((n, x) => n + x.bd.total, 0);
+    const names = booked.map(x => (x.bd.total > 0 ? `${x.p.name} (£${x.bd.money})` : x.p.name)).join(', ');
+    return { message: `Booked ${booked.length} into the lesson: ${names}${total > 0 ? ` — £${fmtMoney(total)} in all, ${pay}` : ''}. Each of them is emailed their own confirmation.${skipped.length ? ` Not booked: ${skipped.join(' ')}` : ''}` };
   };
 
-  const cancelLessonBooking = async (slot, booking) => {
-    await saveLessonSlots(lessonSlots.map(s => (s.id === slot.id ? removeLessonBooking(s, booking.id) : s)));
+  // Several at once (a whole group) go through in ONE write to each store:
+  // doing them one by one would have each write start from the same stale
+  // copy, and only the last would stick.
+  const cancelLessonBookings = async (slot, bookings) => {
+    const ids = new Set(bookings.map(b => b.id));
+    await saveLessonSlots(lessonSlots.map(s => (s.id === slot.id ? { ...s, bookings: (s.bookings || []).filter(b => !ids.has(b.id)) } : s)));
+    bookings.forEach(b => {
+      const pid = playerIdFor(b);
+      if (pid != null) bookingEmail({ event: 'cancelled', kind: 'lesson', slotId: slot.id, bookingId: b.id, playerId: String(pid), type: b.type });
+    });
+  };
+  const cancelLessonBooking = (slot, booking) => cancelLessonBookings(slot, [booking]);
+
+  // The admin settling a group that has not reached its minimum.
+  //   smaller     the minimum comes down to the riders it has — it goes ahead.
+  //   individual  its one rider becomes an individual lesson, at the
+  //               individual rate.
+  //   cancel      everyone off.
+  const resolveShortGroup = async (slot, action) => {
+    const current = lessonSlots.find(s => s.id === slot.id) || slot;
+    const riders = lessonGroupBookings(current);
+    if (action === 'smaller') {
+      await saveLessonSlots(lessonSlots.map(s => (s.id === current.id ? runAsSmallerGroup(current) : s)));
+      return { message: `Going ahead as a group of ${riders.length}.` };
+    }
+    if (action === 'cancel') {
+      await cancelLessonBookings(current, riders);
+      return { message: `Group cancelled — ${riders.length} rider${riders.length === 1 ? '' : 's'} taken off.` };
+    }
+    if (action === 'individual') {
+      const res = groupToIndividual(current);
+      if (!res.ok) return { error: res.error };
+      const b = res.booking;
+      let message = `${b.name} now has an individual lesson.`;
+      const player = playerDb.find(p => p.id === b.playerId) || { name: b.name, membership: 'none' };
+      const q = quoteLesson(player, 'individual', windowHours(current) || 1, !!b.ponyHire);
+      if (q.total > 0) message += ` The price is now £${q.money}.`;
+      await saveLessonSlots(lessonSlots.map(s => (s.id === current.id ? res.slot : s)));
+      return { message };
+    }
+    return { error: 'Unknown action.' };
   };
 
   // Captain's manual "we're full" switch, on top of the automatic 24-hour cutoff.
@@ -2179,6 +2385,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   // automatic cutoff has passed. Stamped with the session date so it only ever
   // applies to that session. An explicit "we're full" close still wins over it.
   const toggleManualOpen = async (dayKey = activeDay) => {
+    // The price is shown and the place accepted; nothing is charged until
+    // card payment is live.
     const iso = currentDayISO(dayKey);
     const on = manualOpen[dayKey] === iso;
     const val = on ? '' : iso;
@@ -2186,6 +2394,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     try {
       if (val) await window.storage.set(storageKey('booking-open', dayKey), val, true);
       else await window.storage.delete(storageKey('booking-open', dayKey), true);
+    if (res.booking) bookingEmail({ event: 'booked', kind: 'lesson', slotId: slot.id, bookingId: res.booking.id });
     } catch (err) {}
   };
 
@@ -2244,6 +2453,15 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     type: 'Member', membership: 'none', student: false, unit: '', active: true,
     subsidies: [], notes: '',
   });
+  // One format for every phone number: a UK number starting 0, no spaces and
+  // no +44, so the same mobile always reads (and matches) the same.
+  const ukPhone = (v) => {
+    let d = String(v || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (d.startsWith('0044')) d = d.slice(4);
+    else if (d.startsWith('44') && d.length >= 12) d = d.slice(2);
+    return d.startsWith('0') ? d : `0${d}`;
+  };
   const newPlayerId = (salt = '') => `p-${Date.now()}-${salt}${Math.random().toString(36).slice(2, 7)}`;
   const savePlayerDb = async (next) => {
     setPlayerDb(next);
@@ -2392,7 +2610,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const openNewPlayer = () => { setPdbError(''); setPlayerEditor(blankPlayer()); };
   const openEditPlayer = (p) => {
     setPdbError('');
-    setPlayerEditor({ ...blankPlayer(), ...p, handicap: p.handicap == null ? '' : String(p.handicap), uid: p.uid || '', authProviders: p.authProviders || [], linkedBy: p.linkedBy || '' });
+    // `isAdmin` on the draft is the Admin switch, read from the admins list —
+    // it is not a field of the record and is not saved with it.
+    setPlayerEditor({ ...blankPlayer(), ...p, handicap: p.handicap == null ? '' : String(p.handicap), isAdmin: isAdminEmail(p.email), uid: p.uid || '', authProviders: p.authProviders || [], linkedBy: p.linkedBy || '' });
   };
   const savePlayer = async () => {
     const draft = playerEditor || {};
@@ -2400,12 +2620,13 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     if (!name) { setPdbError('Please enter a name.'); return; }
     const email = (draft.email || '').trim();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setPdbError('That email address looks off.'); return; }
+    if (draft.isAdmin && !email) { setPdbError('An admin needs an email address — it is what they sign in with.'); return; }
     const record = {
       id: draft.id || newPlayerId(),
       name,
       handicap: draft.handicap === '' || draft.handicap == null ? null : Number(draft.handicap),
       email,
-      mobile: (draft.mobile || '').trim(),
+      mobile: ukPhone(draft.mobile),
       type: draft.type || 'Member',
       membership: draft.membership || 'none',
       student: !!draft.student,
@@ -2428,6 +2649,20 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     await savePlayerDb(next);
     // Keep the lightweight members autofill cache in step with the database.
     try { await upsertMember({ name: record.name, handicap: record.handicap, mobile: record.mobile }); } catch (e) {}
+    // The Admin switch: add or remove the record's email on the admins list.
+    // If the email itself changed, the old one comes off too, so admin status
+    // follows the person rather than an address they no longer use.
+    if (auth.enabled && isAdmin && adminEmails) {
+      const prev = playerDb.find(p => p.id === record.id);
+      const oldEmail = prev ? (prev.email || '').trim().toLowerCase() : '';
+      const newEmail = record.email.toLowerCase();
+      let wanted = adminEmails.filter(e => e !== newEmail && !(oldEmail && oldEmail !== newEmail && e === oldEmail));
+      if (draft.isAdmin && newEmail && !fixedAdminEmails.includes(newEmail)) wanted = [...wanted, newEmail];
+      if (JSON.stringify(wanted) !== JSON.stringify(adminEmails)) {
+        try { await window.auth.setAdmins(wanted); setAdminEmails(wanted); }
+        catch (e) { setPdbError(`Saved the player, but the admin change did not stick: ${authErrorText(e)}`); return; }
+      }
+    }
     setPlayerEditor(null);
     setPdbError('');
   };
@@ -2574,10 +2809,12 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     return { freeToRoster: total <= 0, chukkas: n, ponyLevel: ponyLevel || 'club', wantsPony, ponyHire, chukkaFee, gross, studentDiscount, total };
   };
   // --- Lessons (coaching) pricing + payment. Subsidy pots apply here. ---
-  const priceLesson = (player, lessonId) => {
+  // `ownPony` prices the line at its own-pony rate where the card has one.
+  const priceLesson = (player, lessonId, ownPony = false) => {
     const lt = lessonById(lessonId);
     const student = !!(player && player.student);
-    const base = student ? lt.student : lt.std;
+    const own = !!(ownPony && lt.own);
+    const base = own ? (student ? lt.own.student : lt.own.std) : (student ? lt.student : lt.std);
     let running = base;
     const subsidyDeductions = [];
     ((player && player.subsidies) || []).forEach(sid => {
@@ -2588,7 +2825,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
       if (desired > 0) subsidyDeductions.push({ id: s.id, name: s.name, amount, desired, capped: amount < desired });
       running -= amount;
     });
-    return { lessonId: lt.id, lessonLabel: lt.label, base, studentRate: student, subsidyDeductions, total: Math.max(0, running) };
+    return { lessonId: lt.id, lessonLabel: own ? `${lt.label} · own pony` : lt.label, base, studentRate: student, ownPony: own, subsidyDeductions, total: Math.max(0, running) };
   };
   // --- Tournament team registration + entry-fee payment (Teams tab). ---
   const priceEntry = (category, optionId) => {
@@ -2643,8 +2880,59 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     // Leave chukkas blank — varies week to week
   };
 
+  // What a chukka booking will cost: shown when the booking is made, but
+  // nothing is charged until card payment is live. null when nothing to pay.
+  const bookingPrice = (cleanedName, c, wantsPony, dayKey = activeDay) => {
+    const rec = playerDb.find(x => (x.name || '').trim().toLowerCase() === cleanedName.toLowerCase());
+    const subject = rec || { membership: 'none', student: false, subsidies: [] };
+    const bd = priceBooking(subject, c, wantsPony ? 'club' : 'none', dayKey);
+    if (bd.total <= 0) return null;
+    return { total: bd.total, text: `\u00a3${fmtMoney(bd.total)}${bd.instructional ? ' (session price, pony included)' : wantsPony ? ' (incl. pony hire)' : ''}` };
+  };
+
+  // The roster entry for whoever is filling the form in.
+  const signupEntry = ({ h, c, cleanedName }) => ({
+    id: Date.now(),
+    // Who booked this, when sign-in is on: it lets a member take their own
+    // name off the list, and nobody else's.
+    uid: auth.enabled && auth.user ? auth.user.uid : undefined,
+    // The player-database record this entry is for, and — when a member has
+    // booked a teammate in — who did the booking, shown on the list.
+    playerId: (() => {
+      if (!memberBooking) return undefined;
+      const rec = bookingFor === 'me' ? myPlayer : teammates.find(t => t.id === bookingFor);
+      return rec ? rec.id : undefined;
+    })(),
+    bookedBy: memberBooking && bookingFor !== 'me' && myName ? myName : undefined,
+    name: cleanedName,
+    mobile: mobile.trim() || undefined,
+    handicap: h,
+    chukkas: c,
+    // Stored as HH:MM string; empty = available from the throw-in (default)
+    availableFrom: availableFrom || fmtTime(throwInMin),
+    // Stored as HH:MM string; empty = no upper cap (play through last chukka)
+    availableTo: availableTo || '',
+    vip: captainMode ? vip : false,
+    noConsecutive: DAY_CONFIG[activeDay].instructional ? false : noConsecutive,
+    ponyHire: ponyHire,
+  });
+
+  const clearSignupForm = () => {
+    const fixedC = fixedChukkasFor();
+    setName(''); setMobile(''); setHandicap('');
+    setChukkas(fixedC ? String(fixedC) : '');
+    setAvailableFrom(''); setAvailableTo(''); setVip(false); setNoConsecutive(false); setPonyHire(false);
+    // A member's form goes back to being for themselves.
+    if (memberBooking) {
+      setBookingFor('me');
+      const d = detailsFor('me');
+      setName(d.name); setHandicap(d.handicap); setMobile(d.mobile);
+    }
+  };
+
   const handleAdd = () => {
     setError('');
+    if (auth.enabled && !isMember && !captainMode) { openSignIn(); return; }
     // Booking cutoff: 24h before that day's throw-in. Captain bypasses.
     if (!captainMode && isBookingClosed()) {
       return setError(`${bookingClosedReason()} To be added, please contact the captain at ${CONTACT_EMAIL}.`);
@@ -2680,38 +2968,29 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     if (existing) {
       return setError(`${existing.name} is already on the roster${captainMode ? ' — adjust their chukkas with the +/− buttons.' : ` for this ${activeDayConfig.fullLabel}.`}`);
     }
-    const newPlayer = {
-      id: Date.now(),
-      name: cleanedName,
-      mobile: mobile.trim() || undefined,
-      handicap: h,
-      chukkas: c,
-      // Stored as HH:MM string; empty = available from the throw-in (default)
-      availableFrom: availableFrom || fmtTime(throwInMin),
-      // Stored as HH:MM string; empty = no upper cap (play through last chukka)
-      availableTo: availableTo || '',
- 
-      vip: captainMode ? vip : false,
-      noConsecutive: dayCfg.instructional ? false : noConsecutive,
-      ponyHire: ponyHire,   };
-    saveRoster([...players, newPlayer]);
+    const price = bookingPrice(cleanedName, c, ponyHire);
+    const newPlayer = { ...signupEntry({ h, c, cleanedName }), bookedAt: Date.now() };
+    const bookDay = activeDay;
+    saveRoster([...players, newPlayer])
+      .then(() => bookingEmail({ event: 'booked', kind: 'chukka', day: bookDay, entryId: String(newPlayer.id) }));
     upsertMember(newPlayer);
     // The price is shown and the place accepted; nothing is charged until
     // card payment is live.
-    {
-      const rec = playerDb.find(p => (p.name || '').trim().toLowerCase() === cleanedName.toLowerCase());
-      const subject = rec || { membership: 'none', student: false, subsidies: [] };
-      const bd = priceBooking(subject, c, ponyHire ? 'club' : 'none');
-      setBookingMsg(bd.total > 0
-        ? `Added to the roster — £${fmtMoney(bd.total)}${ponyHire ? ' (incl. pony hire)' : ''}, payable by card once online payment is live.`
-        : 'Added to the roster — no charge.');
-    }
-    setName(''); setMobile(''); setHandicap(''); setChukkas(fixedC ? String(fixedC) : ''); setAvailableFrom(''); setAvailableTo(''); setVip(false); setNoConsecutive(false); setPonyHire(false);
+    const who = newPlayer.bookedBy ? `${cleanedName} added` : 'Added';
+    setBookingMsg(price
+      ? `${who} to the roster \u2014 ${price.text}, payable by card once online payment is live.`
+      : `${who} to the roster \u2014 no charge.`);
+    clearSignupForm();
     saveSchedule(null);
   };
 
   const removePlayer = (id) => {
-    saveRoster(players.filter(p => p.id !== id));
+    const gone = players.find(p => p.id === id);
+    const day = activeDay;
+    saveRoster(players.filter(p => p.id !== id)).then(() => {
+      const pid = playerIdFor(gone);
+      if (pid != null) bookingEmail({ event: 'cancelled', kind: 'chukka', day, entryId: String(id), playerId: String(pid) });
+    });
     saveSchedule(null);
   };
 
@@ -3908,7 +4187,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     if (!match) return;
     if (match.handicap !== null && match.handicap !== undefined) setTHandicap(String(match.handicap));
     const players = (match.players || []).filter(p => p.name?.trim())
-      .map(p => ({ name: p.name, handicap: (p.handicap === 0 || p.handicap) ? String(p.handicap) : '' }));
+      .map(p => {
+        const rec = playerDb.find(x => (x.name || '').trim().toLowerCase() === p.name.trim().toLowerCase());
+        const h = rec && rec.handicap != null && rec.handicap !== '' ? rec.handicap : p.handicap;
+        return { name: p.name, handicap: (h === 0 || h) ? String(h) : '', member: rec ? (rec.membership || 'none') !== 'none' : null };
+      });
     if (!players.length) return;
     setTSquads(prev => {
       const next = { ...prev };
@@ -3924,12 +4207,72 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
   const removeSquadPlayer = (dayKey, idx) =>
     setTSquads(prev => ({ ...prev, [dayKey]: (prev[dayKey] || []).filter((_, i) => i !== idx) }));
 
+  // What a team's entry costs, from the rate card. A military tournament is
+  // one flat military team fee whoever plays in it. Otherwise each named
+  // player carries a share of their own category's team fee — a team of four
+  // with two members and two non-members pays half the member fee plus half
+  // the non-member fee — so the total always sits between the two. The person
+  // entering pays it all and collects the shares from the others.
+  const entryLength = (fx) => (fixtureDays(fx).length >= 2 ? 2 : 1);
+  const entryFeeFor = (cat, len) => {
+    const opts = entryOptions(cat);
+    const hit = opts.find(o => new RegExp(`(^|[^0-9])${len}\\s*(day|d\\b)`, 'i').test(`${o.label} ${o.id}`)) || opts[len === 2 ? 1 : 0] || opts[0];
+    return hit ? Number(hit.fee) || 0 : 0;
+  };
+  const isClubMember = (name) => {
+    const rec = playerDb.find(p => (p.name || '').trim().toLowerCase() === String(name || '').trim().toLowerCase());
+    return !!(rec && (rec.membership || 'none') !== 'none');
+  };
+  const priceTeamEntry = (fx, rows) => {
+    const named = (rows || []).filter(r => (r.name || '').trim());
+    const len = entryLength(fx);
+    const memberFee = entryFeeFor('member', len);
+    const nonFee = entryFeeFor('nonmember', len);
+    const shares = named.map(r => {
+      const member = r.member == null ? isClubMember(r.name) : !!r.member;
+      return { name: r.name.trim(), member, share: (member ? memberFee : nonFee) / named.length };
+    });
+    return { military: false, len, memberFee, nonFee, total: shares.reduce((n, x) => n + x.share, 0), shares };
+  };
+  // Players from the database that match what has been typed in a squad row,
+  // best first — shown as tappable suggestions under the name.
+  const squadSuggestions = (typed, taken) => {
+    const q = String(typed || '').trim().toLowerCase();
+    if (q.length < 2) return [];
+    if (playerDb.some(p => (p.name || '').trim().toLowerCase() === q)) return [];
+    const takenSet = new Set((taken || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
+    return playerDb
+      .filter(p => p.name && !p.name.includes('/') && !takenSet.has(p.name.trim().toLowerCase()))
+      .map(p => {
+        const n = p.name.toLowerCase();
+        const score = n.startsWith(q) ? 3 : n.split(/\s+/).some(w => w.startsWith(q)) ? 2 : n.includes(q) ? 1 : 0;
+        return { p, score };
+      })
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score || (a.p.active === false) - (b.p.active === false) || a.p.name.localeCompare(b.p.name))
+      .slice(0, 4).map(x => x.p);
+  };
+  // Fill a squad row from a player record: name, handicap and member or not.
+  const pickSquadPlayer = (dayKey, idx, rec) => {
+    setTSquads(prev => ({ ...prev, [dayKey]: (prev[dayKey] || []).map((row, i) => (i === idx ? {
+      ...row, name: rec.name, handicap: rec.handicap == null || rec.handicap === '' ? row.handicap : String(rec.handicap),
+      member: (rec.membership || 'none') !== 'none',
+    } : row)) }));
+  };
+
+  // The squad the fee is worked out on: the fullest day's.
+  const pricingSquad = (fx) => {
+    const days = fixtureDays(fx);
+    const rows = (tPerDay && days.length > 1 ? days : [days[0]]).map(d => tSquads[d.key] || []);
+    return rows.reduce((best, arr) => (arr.filter(r => (r.name || '').trim()).length > best.filter(r => (r.name || '').trim()).length ? arr : best), rows[0] || []);
+  };
+
   const registerTeam = (fx) => {
     setTError('');
     if (!tName.trim()) return setTError('Please enter a team name.');
     const days = fixtureDays(fx);
     const cleanRows = (rows) => (rows || [])
-      .map(r => ({ name: (r.name || '').trim(), handicap: r.handicap === '' || r.handicap == null ? null : parseInt(r.handicap, 10) }))
+      .map(r => ({ name: (r.name || '').trim(), handicap: r.handicap === '' || r.handicap == null ? null : parseInt(r.handicap, 10), member: r.member == null ? isClubMember(r.name) : !!r.member }))
       .filter(r => r.name);
     const usePerDay = tPerDay && days.length > 1;
     const daysOut = {};
@@ -3949,6 +4292,10 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     };
     if (tContact.trim()) entry.contact = tContact.trim();
     if (tMobile.trim()) entry.mobile = tMobile.trim();
+    // The fee as it stood when they entered, and who is paying it.
+    const fee = priceTeamEntry(fx, pricingSquad(fx));
+    entry.fee = { total: Math.round(fee.total * 100) / 100, days: fee.len, shares: fee.shares.map(x => ({ ...x, share: Math.round(x.share * 100) / 100 })) };
+    if (myName) entry.bookedBy = myName;
     const list = teamSignups[fx.id] || [];
     saveTeamSignups({ ...teamSignups, [fx.id]: [...list, entry] });
     // Remember this team (fullest day's squad) so it autofills next time.
@@ -4313,6 +4660,620 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     .slice(0, 8);
 
+  // ── HOME — the member's dashboard (HomeDashboard.jsx, model in home.js) ──
+  // Everything below is read from state the app already holds; the booking
+  // goes through the same roster and waiting list paths as the
+  // Chukkas tab's form, so the captain sees a Home booking exactly as any other.
+  //
+  // Who is signed in. Home is the sign-in screen, so it wakes the provider
+  // (authFirebase.js) when it is shown, and so does any load on a device where
+  // somebody has signed in before. Sign-in stays DORMANT for the app at large
+  // (auth.enabled is false, so the captain PIN and every existing gate behave
+  // as before); a signed-in account is matched to the club's player list by
+  // accountLink.js, and that record is who Home books for.
+  const [authLoad, setAuthLoad] = useState(''); // '' | 'loading' | 'ok' | 'failed'
+  const authInstalled = authLoad === 'ok';
+  const [homeAuth, setHomeAuth] = useState(null); // AuthSheet start step | null
+  // A link from one of the club's emails (reset, confirm, sign-in), finished
+  // on the app's own screen. A sign-in link whose address was remembered on
+  // this device completes by itself; it only needs the screen when the
+  // address has to be asked for, or the link has gone stale.
+  const [emailAct, setEmailAct] = useState(readEmailAction);
+  const actionPage = emailAct && emailAct.mode !== 'signIn' ? emailAct
+    : (auth.pendingLink || auth.linkError) ? { mode: 'signIn', code: '', pending: auth.pendingLink, error: auth.linkError } : null;
+  const closeActionPage = (next) => {
+    clearEmailAction();
+    setEmailAct(null);
+    if (window.auth && (window.auth.pendingLink || window.auth.linkError)) {
+      window.auth.pendingLink = false; window.auth.linkError = '';
+    }
+    setActiveTab('home');
+    if (next) setHomeAuth(next);
+  };
+  useEffect(() => {
+    if (authLoad || !(activeTab === 'home' || hadSignIn())) return;
+    setAuthLoad('loading');
+    import('./authFirebase').then(m => m.installClubAuth())
+      .then(() => setAuthLoad('ok'))
+      .catch(() => setAuthLoad('failed'));
+  }, [activeTab, authLoad]);
+  // Known either way: the provider has reported who (if anyone) is signed in.
+  // Until its first report the snapshot is still the dormant default, whose
+  // method list is empty — that is what tells the two apart. If the SDK could
+  // not load at all, Home shows the sign-in screen rather than spinning.
+  const authSettled = authLoad === 'failed' || (authInstalled && auth.ready && (auth.methods || []).length > 0);
+  useEffect(() => { if (authSettled && authInstalled) noteSignIn(!!auth.user); }, [authSettled, auth.user && auth.user.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const homeSignedIn = !!auth.user;
+  const homePlayer = homeSignedIn ? myPlayer : null;
+  // Chukkas and Lessons join the bar once somebody is signed in, or the
+  // captain PIN is on.
+  const loggedOn = homeSignedIn || captainMode;
+  // A restore onto Chukkas or Lessons by someone signed out goes to Home —
+  // but only once it is known they are signed out, or a member returning to
+  // the app would be bounced off their own page while sign-in wakes.
+  useEffect(() => {
+    if (!loaded || loggedOn || !MEMBER_TABS.includes(activeTab)) return;
+    if (hadSignIn() && !authSettled) return;
+    setActiveTab('home');
+  }, [loaded, loggedOn, activeTab, authSettled]);
+  const homeAccount = homeSignedIn ? {
+    name: (auth.profile && auth.profile.name) || auth.user.displayName || '',
+    email: auth.user.email || '',
+    photo: photoOf(auth.user, auth.profile),
+    ownPhoto: (auth.profile && auth.profile.photo) || '',
+    providerPhoto: auth.user.photoURL || '',
+    providers: auth.user.providers || [],
+    team: (homePlayer && homePlayer.team) || '',
+    ambiguous: !myPlayer && !!(myMatch.candidates && myMatch.candidates.length > 1),
+  } : null;
+  const homeMoney = (n) => {
+    const v = Math.round((Number(n) || 0) * 100) / 100;
+    return `£${Number.isInteger(v) ? v.toLocaleString('en-GB') : fmtMoney(v)}`;
+  };
+  const firstNameOf = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+  const homeSessionName = (cfg) => (cfg.note ? cfg.note.split(' · ')[0] : `${cfg.fullLabel} Chukkas`);
+
+  // This week's sessions in date order, each with where one player stands —
+  // the member, or a teammate they are booking for.
+  // Thursday and Friday are club sessions, booked from Lessons (see openDay).
+  const clubSessionForDay = (dk) => CLUB_SESSIONS.find(k => k.dayKey === dk) || null;
+  const homeSessionsFor = (homePlayer) => {
+    const now = Date.now();
+    return DAY_KEYS.map((k) => {
+      const cfg = DAY_CONFIG[k];
+      const date = nextChukkaDate(k);
+      const startMin = throwInMins[k];
+      const start = new Date(date);
+      start.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
+      const roster = rosters[k] || [];
+      const entry = homePlayer ? roster.find(e => isMine(e, homePlayer)) || null : null;
+      const wIdx = -1; // no waiting list at this club
+      const block = bookingBlock(k);
+      const hBlock = homePlayer && !captainMode ? handicapBlockReason(homePlayer.handicap, k) : '';
+      let status = 'open';
+      if (entry) status = 'booked';
+      else if (wIdx >= 0) status = 'waitlisted';
+      else if (hBlock) status = 'blocked';
+      else if (block === 'full' && !captainMode) status = 'full';
+      else if (block && !captainMode) status = 'closed';
+      const showDraw = !!schedules[k] && (captainMode || drawPublished[k]);
+      return {
+        key: k, name: homeSessionName(cfg), fullDay: cfg.fullLabel, blurb: cfg.blurb,
+        viaLessons: !!clubSessionForDay(k),
+        dow: cfg.label.toUpperCase(), dayNum: String(date.getDate()),
+        dateLabel: date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
+        time: fmtTime(startMin), start, ground: grounds[k] || '',
+        fixed: fixedChukkasFor(k), max: maxChukkasFor(k), instructional: !!cfg.instructional,
+        // The same "Available from / to" choices as the Chukkas form: a member
+        // may start up to three chukkas in and leave from the fifth on.
+        fromTimes: (captainMode ? [0, 1, 2, 3, 4, 5, 6, 7] : [0, 1, 2, 3]).map(i => fmtTime(startMin + i * CHUKKA_INTERVAL_MIN)),
+        toTimes: (captainMode ? [0, 1, 2, 3, 4, 5, 6, 7] : [4, 5, 6, 7]).map(i => fmtTime(startMin + i * CHUKKA_INTERVAL_MIN)),
+        status, reason: hBlock || (block ? bookingClosedReason(k) : ''),
+        entry, waitPlace: wIdx + 1, slots: entry && showDraw ? mySlots(schedules[k], entry.id) : [],
+        players: roster.length, chukkasAsked: roster.reduce((sum, e) => sum + (Number(e.chukkas) || 0), 0),
+        cap: signupCap(k), block,
+      };
+    })
+      // A session drops off once it has been played (throw-in plus three hours).
+      .filter(s => s.start.getTime() + 3 * 3600000 > now)
+      .sort((a, b) => a.start - b.start);
+  };
+  const homeSessions = homeSessionsFor(homePlayer);
+
+  // Who Home may book for: the member, and anyone on their team. It is the
+  // same rule the Chukkas form applies (teammates, from the free-text team on
+  // the player record, which an admin sets), so the two never disagree.
+  const homeWhoRec = (who) => (!who || who === 'me' ? homePlayer : teammates.find(t => t.id === who) || null);
+  const homePeople = homePlayer ? [
+    { id: 'me', name: homePlayer.name, me: true, team: homePlayer.team || '' },
+    ...teammates.map(t => ({ id: t.id, name: t.name, handicapText: t.handicap == null || t.handicap === '' ? '' : fmtH(Number(t.handicap)) })),
+  ] : [];
+
+  const homeQuote = (k, n, pony, who) => {
+    const rec = homeWhoRec(who);
+    const self = !who || who === 'me';
+    const bd = priceBooking(rec, n, pony ? 'club' : 'none', k);
+    const mem = membershipById((rec && rec.membership) || 'none');
+    if (!self) {
+      const first = firstNameOf(rec && rec.name);
+      const note = bd.instructional ? `One price for the session, pony included \u2014 ${first} pays, not you.`
+        : bd.total <= 0 ? (mem.chukkasIncluded ? `Chukkas are included in ${first}\u2019s membership.` : 'Nothing to pay.')
+        : `${first} pays, not you \u2014 by card once online payment is live.`;
+      return { price: bd.total > 0 ? homeMoney(bd.total) : 'Included', note, total: bd.total };
+    }
+    const note = bd.instructional ? 'One price for the session, pony included.'
+      : bd.total <= 0 ? (mem.chukkasIncluded ? 'Chukkas are included in your membership.' : 'Nothing to pay.')
+      : mem.chukkasIncluded ? 'Chukkas are in your membership; this is the pony hire.'
+      : 'Payable by card once online payment is live — nothing is taken now.';
+    return { price: bd.total > 0 ? homeMoney(bd.total) : 'Included', note, total: bd.total };
+  };
+
+  // `opts` carries the rest of the Chukkas form: availableFrom / availableTo
+  // (HH:MM, empty for throw-in and the end) and noConsecutive.
+  const homeBook = async (k, n, pony, waitlist, who, opts = {}) => {
+    const self = !who || who === 'me';
+    const rec = homeWhoRec(who);
+    if (!homePlayer) return { error: 'Sign in to book.' };
+    if (!rec) return { error: 'You can book yourself or someone on your team.' };
+    const you = self ? 'You\u2019re' : `${firstNameOf(rec.name)}\u2019s`;
+    const cfg = DAY_CONFIG[k];
+    const block = bookingBlock(k);
+    if (!captainMode) {
+      if (block && !(waitlist && block === 'full')) return { error: bookingClosedReason(k) };
+      const hb = handicapBlockReason(rec.handicap, k);
+      if (hb) return { error: hb };
+    }
+    if (rec.handicap === '' || rec.handicap == null || isNaN(Number(rec.handicap))) {
+      return { error: self ? 'The club has no handicap for you yet — ask the captain to add it, or book from the Chukkas tab.'
+        : `The club has no handicap for ${rec.name} yet — ask the captain to add it.` };
+    }
+    const roster = rosters[k] || [];
+    if (roster.some(e => isMine(e, rec))) return { error: `${you} already on the ${cfg.fullLabel} list.` };
+    const c = fixedChukkasFor(k) || Math.max(1, Math.min(maxChukkasFor(k), parseInt(n, 10) || 1));
+    const from = opts.availableFrom || '';
+    const to = opts.availableTo || '';
+    if (from && to && parseTime(to) < parseTime(from)) return { error: '"Available to" must be the same as or later than "Available from".' };
+    const cleanedName = String(rec.name || '').trim().replace(/\s+/g, ' ');
+    const entry = {
+      id: Date.now(),
+      uid: auth.user ? auth.user.uid : undefined,
+      playerId: rec.id,
+      // Shown on the list beside a teammate's name, as the Chukkas form does.
+      bookedBy: self ? undefined : homePlayer.name,
+      name: cleanedName,
+      mobile: rec.mobile || undefined,
+      handicap: Number(rec.handicap),
+      chukkas: c,
+      bookedAt: Date.now(),
+      availableFrom: from || fmtTime(throwInMins[k]),
+      availableTo: to,
+      vip: false,
+      noConsecutive: cfg.instructional ? false : !!opts.noConsecutive,
+      ponyHire: !!pony,
+    };
+    const price = bookingPrice(cleanedName, c, !!pony, k);
+    await saveRoster([...roster, entry], k);
+    upsertMember(entry);
+    await saveSchedule(null, k);
+    bookingEmail({ event: 'booked', kind: 'chukka', day: k, entryId: String(entry.id) });
+    return { day: k, entryId: entry.id, playerId: rec.id, priceText: price ? homeMoney(price.total) : '' };
+  };
+
+  // Undo straight after booking: off the list.
+  const homeUndo = async (r) => {
+    if (!r || !r.day) return;
+    const mail = { event: 'cancelled', kind: r.waitlisted ? 'waitlist' : 'chukka', day: r.day, entryId: String(r.entryId), playerId: String(r.playerId) };
+    await saveRoster((rosters[r.day] || []).filter(e => e.id !== r.entryId), r.day);
+    if (r.playerId != null) bookingEmail(mail);
+    await saveSchedule(null, r.day);
+  };
+
+  // ── Amend or cancel, from a booking email ──────────────────────────────
+  // The email's button opens the app with ?manage=… (bookingEmail.js). The
+  // request waits for sign-in, then opens "Your booking" on Home. Who may
+  // change a booking is the same as who may make or take one off: the member,
+  // their team, or an admin.
+  const [manageReq, setManageReq] = useState(() => manageRequest());
+  // ── The booking terms (terms.js, TermsSheet.jsx) ───────────────────────
+  // Read from the footer, any booking screen, or a booking email's link
+  // (?terms=1). With sign-in on, a member accepts them once — the version
+  // and the moment go on their profile — and again whenever TERMS_VERSION
+  // changes; until then the accept screen stands in front of the app.
+  const [termsOpen, setTermsOpen] = useState(() => {
+    try { return new URL(window.location.href).searchParams.get('terms') === '1'; } catch (e) { return false; }
+  });
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('terms')) { url.searchParams.delete('terms'); window.history.replaceState(null, '', url.pathname + url.search + url.hash); }
+    } catch (e) { /* nothing to tidy */ }
+  }, []);
+  const openTerms = () => setTermsOpen(true);
+  const needTerms = !!(auth.enabled && auth.ready && auth.user && auth.profileReady
+    && !(auth.profile && auth.profile.termsVersion === TERMS_VERSION));
+  useEffect(() => { if (manageReq) clearManageRequest(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (manageReq && homeSignedIn) { setActiveTab('home'); window.scrollTo(0, 0); }
+  }, [!!manageReq, homeSignedIn]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mayManage = (e) => !!e && (captainMode || entryIsMe(e) || entryIsTeammate(e)
+    || (!!auth.user && !!e.uid && e.uid === auth.user.uid)
+    || (!!homePlayer && sameName(e.name, homePlayer.name)));
+  const findManaged = (req) => {
+    if (!req) return null;
+    if (req.kind === 'lesson') {
+      const slot = lessonSlots.find(sl => String(sl.id) === String(req.slotId)) || null;
+      const booking = slot ? (slot.bookings || []).find(b => String(b.id) === String(req.bookingId)) || null : null;
+      return { slot, booking };
+    }
+    const list = rosters[req.day] || [];
+    const entry = DAY_CONFIG[req.day] ? list.find(e => String(e.id) === String(req.entryId)) || null : null;
+    return { entry, place: entry ? list.indexOf(entry) + 1 : 0 };
+  };
+
+  const homeManage = (() => {
+    if (!manageReq || !homeSignedIn) return null;
+    const f = findManaged(manageReq);
+    const key = JSON.stringify(manageReq);
+    if (manageReq.kind === 'lesson') {
+      const { slot, booking } = f;
+      const session = !!(slot && slot.kind);
+      const kindLabel = session ? ((clubSessionById(slot.kind) || {}).label || 'Club session') : booking ? `${booking.type === 'group' ? 'Group' : 'Individual'} lesson` : 'Lesson';
+      const hrs = booking ? Number(booking.hours) || 1 : 1;
+      return {
+        key, kind: 'lesson', missing: !booking, allowed: !!booking && mayManage(booking),
+        title: kindLabel, dateText: slot ? lessonDateLabel(slot.date) : '', time: slot ? `${slot.start}–${slot.end}` : '',
+        ground: (slot && slot.ground) || '', coach: (slot && slot.coach) || '',
+        personName: booking ? booking.name : '', personIsMe: !!booking && !!homePlayer && (booking.playerId === homePlayer.id || sameName(booking.name, homePlayer.name)),
+        pony: !!(booking && booking.ponyHire), ponyIncluded: !session,
+        ...(() => {
+          // A lesson's price depends on the pony; a session's does not here.
+          if (session || !booking) return {};
+          const rec = playerDb.find(p => p.id === booking.playerId) || null;
+          const h = Number(booking.hours) || 1;
+          return { ponyPrices: { club: quoteLesson(rec, booking.type, h, true).money, own: quoteLesson(rec, booking.type, h, false).money } };
+        })(),
+        lessonText: session ? 'The whole session' : `${hrs} hour${hrs === 1 ? '' : 's'}`,
+        bookedBy: (booking && booking.bookedBy && booking.bookedBy !== booking.name) ? booking.bookedBy : '',
+      };
+    }
+    const k = manageReq.day;
+    const cfg = DAY_CONFIG[k] || {};
+    const e = f.entry;
+    const startMin = throwInMins[k];
+    const date = DAY_CONFIG[k] ? nextChukkaDate(k) : new Date();
+    return {
+      key, kind: manageReq.kind, missing: !e, allowed: !!e && mayManage(e),
+      title: homeSessionName(cfg) || cfg.fullLabel || 'Chukkas',
+      dateText: date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
+      time: startMin != null ? fmtTime(startMin) : '', ground: grounds[k] || '',
+      personName: e ? e.name : '', personIsMe: !!e && !!homePlayer && (e.playerId === homePlayer.id || sameName(e.name, homePlayer.name)),
+      chukkas: e ? Number(e.chukkas) || 1 : 2, pony: !!(e && e.ponyHire),
+      from: e && e.availableFrom && startMin != null && e.availableFrom !== fmtTime(startMin) ? e.availableFrom : '',
+      to: (e && e.availableTo) || '', noConsecutive: !!(e && e.noConsecutive),
+      fixed: DAY_CONFIG[k] ? fixedChukkasFor(k) : null, max: DAY_CONFIG[k] ? maxChukkasFor(k) : 4, instructional: !!cfg.instructional,
+      fromTimes: startMin == null ? [] : (captainMode ? [0, 1, 2, 3, 4, 5, 6, 7] : [0, 1, 2, 3]).map(i => fmtTime(startMin + i * CHUKKA_INTERVAL_MIN)),
+      toTimes: startMin == null ? [] : (captainMode ? [0, 1, 2, 3, 4, 5, 6, 7] : [4, 5, 6, 7]).map(i => fmtTime(startMin + i * CHUKKA_INTERVAL_MIN)),
+      waitPlace: manageReq.kind === 'waitlist' ? f.place : 0,
+    };
+  })();
+
+  const manageAmend = async (d) => {
+    const req = manageReq;
+    const f = findManaged(req);
+    if (!f) return { error: 'Nothing to change.' };
+    if (req.kind === 'lesson') {
+      const { slot, booking } = f;
+      if (!booking) return { error: 'That booking is no longer in the diary.' };
+      if (!mayManage(booking)) return { error: 'You can change your own bookings, or your team’s.' };
+      const next = { ...booking, ponyHire: !!d.pony, amendedAt: Date.now() };
+      let note = '';
+      // The pony changes a lesson's price; say what it is now.
+      if (!slot.kind && !!d.pony !== !!booking.ponyHire) {
+        const rec = playerDb.find(p => p.id === booking.playerId) || null;
+        const q = quoteLesson(rec, booking.type, Number(booking.hours) || 1, !!d.pony);
+        note = `The price is now ${homeMoney(q.total)}.`;
+      }
+      await saveLessonSlots(lessonSlots.map(sl => (sl.id === slot.id ? { ...sl, bookings: (sl.bookings || []).map(b => (b.id === booking.id ? next : b)) } : sl)));
+      bookingEmail({ event: 'amended', kind: 'lesson', slotId: slot.id, bookingId: booking.id });
+      return { ok: true, note };
+    }
+    const k = req.day;
+    const cfg = DAY_CONFIG[k];
+    const e = f.entry;
+    if (!e) return { error: 'That booking is no longer on the list.' };
+    if (!mayManage(e)) return { error: 'You can change your own bookings, or your team’s.' };
+    const block = bookingBlock(k);
+    if (!captainMode && block && block !== 'full') return { error: `${bookingClosedReason(k)} Ask the captain to change it.` };
+    const from = d.from || '';
+    const to = d.to || '';
+    if (from && to && parseTime(to) < parseTime(from)) return { error: '"To" must be the same as or later than "From".' };
+    const c = fixedChukkasFor(k) || Math.max(1, Math.min(maxChukkasFor(k), parseInt(d.chukkas, 10) || 1));
+    const next = {
+      ...e, chukkas: c, ponyHire: !!d.pony,
+      availableFrom: from || fmtTime(throwInMins[k]), availableTo: to,
+      noConsecutive: cfg.instructional ? false : !!d.noConsecutive, amendedAt: Date.now(),
+    };
+    let note = '';
+    {
+      // A change of chukkas or pony changes the price; say what it is now.
+      if (c !== Number(e.chukkas) || !!d.pony !== !!e.ponyHire) {
+        const price = bookingPrice(e.name, c, !!d.pony, k);
+        note = price ? `The price is now ${homeMoney(price.total)}.` : 'Nothing to pay for it now.';
+      }
+      await saveRoster((rosters[k] || []).map(x => (x.id === e.id ? next : x)), k);
+      const drawChanged = c !== Number(e.chukkas) || next.availableFrom !== e.availableFrom
+        || next.availableTo !== (e.availableTo || '') || next.noConsecutive !== !!e.noConsecutive;
+      if (drawChanged) await saveSchedule(null, k);
+    }
+    bookingEmail({ event: 'amended', kind: req.kind, day: k, entryId: String(e.id) });
+    return { ok: true, note };
+  };
+
+  const manageCancel = async () => {
+    const req = manageReq;
+    const f = findManaged(req);
+    if (!f) return { error: 'Nothing to cancel.' };
+    if (req.kind === 'lesson') {
+      const { slot, booking } = f;
+      if (!booking) return { error: 'That booking is no longer in the diary.' };
+      if (!mayManage(booking)) return { error: 'You can cancel your own bookings, or your team’s.' };
+      await cancelLessonBooking(slot, booking); // email sent
+      return { ok: true };
+    }
+    const k = req.day;
+    const e = f.entry;
+    if (!e) return { error: 'That booking is no longer on the list.' };
+    if (!mayManage(e)) return { error: 'You can cancel your own bookings, or your team’s.' };
+    const pid = playerIdFor(e);
+    await saveRoster((rosters[k] || []).filter(x => x.id !== e.id), k);
+    await saveSchedule(null, k);
+    if (pid != null) bookingEmail({ event: 'cancelled', kind: req.kind, day: k, entryId: String(e.id), playerId: String(pid) });
+    return { ok: true };
+  };
+
+  const homeMeView = homePlayer ? {
+    id: homePlayer.id,
+    name: homePlayer.name,
+    handicapText: homePlayer.handicap === '' || homePlayer.handicap == null || isNaN(Number(homePlayer.handicap)) ? null : fmtH(Number(homePlayer.handicap)),
+    membershipText: membershipShort(membershipById(homePlayer.membership || 'none').label, homePlayer.membership),
+    handicapRaw: homePlayer.handicap === '' || homePlayer.handicap == null ? null : homePlayer.handicap,
+    mobile: homePlayer.mobile || '',
+    // Every lesson and club session still to come that the member is booked
+    // on — Home counts them beside their chukkas. A booking stays counted
+    // until its slot has finished.
+    lessonsBooked: lessonBookingsFor(lessonSlots, { playerId: homePlayer.id, name: homePlayer.name })
+      .filter(({ slot }) => slot && slot.date && new Date(`${slot.date}T${slot.end || slot.start || '23:59'}`).getTime() > Date.now())
+      .length,
+  } : null;
+
+  const homeFixtures = upcomingFixtures(fixtures, parseFixtureDateRange, new Date(), 3).map(({ fx, live }) => ({
+    id: fx.id, name: fx.name, date: fx.date, where: fx.level || '',
+    entered: isEntered(fx, homePlayer, interest, teamSignups),
+    closed: isInterestClosed(fx), live,
+  }));
+
+  // ── Enter a tournament from Home ──────────────────────────────────────
+  // The same team entry the Fixtures tab takes — team-signups, priced by
+  // priceTeamEntry from the rate card, remembered in teams-db — walked
+  // through on Home in three steps: pick the tournament, name the team,
+  // review and pay. One squad plays every day; a captain can still set
+  // per-day squads from the Fixtures tab. Entries close the night before
+  // the first day, as Register interest does, and events take no teams.
+  const homeEntryPlayer = (rec) => {
+    const h = rec.handicap == null || rec.handicap === '' || isNaN(Number(rec.handicap)) ? null : Number(rec.handicap);
+    return {
+      id: rec.id, name: rec.name,
+      handicap: h == null ? '' : String(h), handicapText: h == null ? '' : fmtH(h),
+      member: (rec.membership || 'none') !== 'none',
+    };
+  };
+  const homeFindPlayer = (name) => {
+    const q = String(name || '').trim().toLowerCase();
+    const rec = q ? playerDb.find(x => (x.name || '').trim().toLowerCase() === q) : null;
+    return rec ? homeEntryPlayer(rec) : null;
+  };
+  const inSquad = (team, name) => Object.values((team && team.days) || {})
+    .some(sq => (sq || []).some(x => x && (x.name || '').trim().toLowerCase() === String(name || '').trim().toLowerCase()));
+  // A fixture as Home's tournament screens see it.
+  const homeTourFx = (fx, range) => {
+    const closes = interestClosesAt(fx);
+    const teams = teamSignups[fx.id] || [];
+    return {
+      id: fx.id, name: fx.name, date: fx.date, level: fx.level || '', military: !!fx.military,
+      start: range.start, days: fixtureDays(fx).length,
+      mon: range.start.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase(), dayNum: range.start.getDate(),
+      teams: teams.length,
+      entered: !!(homePlayer && teams.some(t => inSquad(t, homePlayer.name))),
+      closes: closes ? closes.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '') : '',
+    };
+  };
+  const homeTournaments = fixtures
+    .map(fx => ({ fx, range: parseFixtureDateRange(fx) }))
+    .filter(({ fx, range }) => !fx.event && range && range.end.getTime() > Date.now() && !isInterestClosed(fx))
+    .sort((a, b) => a.range.start - b.range.start)
+    .map(({ fx, range }) => homeTourFx(fx, range));
+  // The member's own entries still to be played: every team they are in, or
+  // entered on someone's behalf. Editable until the first day starts — after
+  // that the draw is made and a change is the captain's to make.
+  const homeMyEntries = (() => {
+    if (!homePlayer) return [];
+    const meName = homePlayer.name.trim().toLowerCase();
+    const out = [];
+    fixtures.forEach(fx => {
+      if (fx.event) return;
+      const range = parseFixtureDateRange(fx);
+      if (!range || range.end.getTime() < Date.now()) return;
+      (teamSignups[fx.id] || []).forEach(en => {
+        const booked = (en.bookedBy || '').trim().toLowerCase() === meName;
+        if (!booked && !inSquad(en, homePlayer.name)) return;
+        const squad = Object.values(en.days || {}).reduce((best, arr) => ((arr || []).length > best.length ? arr : best), []);
+        out.push({
+          fixtureId: fx.id, entryId: en.id, team: en.team, handicap: en.handicap ?? null,
+          mobile: en.mobile || '', bookedBy: en.bookedBy || '', perDay: !!en.perDay,
+          players: squad.map(p => ({ name: p.name, handicap: p.handicap == null ? '' : String(p.handicap), member: p.member == null ? null : !!p.member })),
+          feeText: en.fee && en.fee.total > 0 ? homeMoney(en.fee.total) : '',
+          live: range.start.getTime() <= Date.now(), closed: isInterestClosed(fx), canEdit: range.start.getTime() > Date.now(),
+          start: range.start, fx: homeTourFx(fx, range),
+        });
+      });
+    });
+    return out.sort((a, b) => a.start - b.start);
+  })();
+  // One squad, validated, from the sheet's rows.
+  const homeSquadRows = (fx, rows) => (rows || [])
+    .map(r => ({ name: (r.name || '').trim(), handicap: r.handicap === '' || r.handicap == null ? null : parseInt(r.handicap, 10), member: r.member == null ? isClubMember(r.name) : !!r.member }))
+    .filter(r => r.name);
+  const homeTour = {
+    list: homeTournaments,
+    find: homeFindPlayer,
+    suggest: (typed, taken) => squadSuggestions(typed, taken).map(homeEntryPlayer),
+    // Teams this member has played in, their own team first, for one-tap
+    // naming; picking one brings its last squad with it.
+    myTeams: () => {
+      if (!homePlayer) return [];
+      const known = knownTeams();
+      const out = [];
+      const add = (n) => { const t = String(n || '').trim(); if (t && !out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t); };
+      add(homePlayer.team);
+      Object.values(known).forEach(t => { if ((t.players || []).some(x => x && (x.name || '').trim().toLowerCase() === homePlayer.name.trim().toLowerCase())) add(t.name); });
+      return out.slice(0, 6);
+    },
+    known: (name) => {
+      const t = knownTeams()[String(name || '').trim().toLowerCase()];
+      if (!t) return null;
+      return {
+        name: t.name, handicap: t.handicap,
+        players: (t.players || []).filter(x => x && (x.name || '').trim()).map(x => homeFindPlayer(x.name)
+          || { name: x.name.trim(), handicap: x.handicap == null ? '' : String(x.handicap), handicapText: x.handicap == null ? '' : fmtH(Number(x.handicap)), member: null }),
+      };
+    },
+    quote: (fxId, rows) => {
+      const fx = fixtures.find(f => f.id === fxId);
+      if (!fx) return null;
+      const q = priceTeamEntry(fx, rows);
+      return {
+        ...q, totalText: homeMoney(q.total),
+        memberFeeText: homeMoney(q.memberFee), nonFeeText: homeMoney(q.nonFee),
+        shares: q.shares.map(x => ({ ...x, shareText: homeMoney(x.share) })),
+      };
+    },
+    enter: (fxId, { team, handicap, mobile, rows }) => {
+      const fx = fixtures.find(f => f.id === fxId);
+      if (!fx) return { error: 'That tournament is no longer listed.' };
+      if (isInterestClosed(fx)) return { error: 'Entries for this tournament have closed.' };
+      const name = String(team || '').trim();
+      if (!name) return { error: 'Give your team a name.' };
+      if ((teamSignups[fx.id] || []).some(x => (x.team || '').trim().toLowerCase() === name.toLowerCase())) {
+        return { error: `A team called ${name} is already entered. Pick another name.` };
+      }
+      const squad = (rows || [])
+        .map(r => ({ name: (r.name || '').trim(), handicap: r.handicap === '' || r.handicap == null ? null : parseInt(r.handicap, 10), member: r.member == null ? isClubMember(r.name) : !!r.member }))
+        .filter(r => r.name);
+      if (!squad.length) return { error: 'Add at least one player.' };
+      const days = {};
+      fixtureDays(fx).forEach(d => { days[d.key] = squad.map(x => ({ ...x })); });
+      const fee = priceTeamEntry(fx, rows);
+      const r2 = (n) => Math.round(n * 100) / 100;
+      const entry = {
+        id: Date.now(), team: name,
+        handicap: handicap === '' || handicap == null || isNaN(parseInt(handicap, 10)) ? null : parseInt(handicap, 10),
+        perDay: false, days,
+        fee: { total: r2(fee.total), days: fee.len, shares: fee.shares.map(x => ({ ...x, share: r2(x.share) })) },
+      };
+      if (myName) { entry.contact = myName; entry.bookedBy = myName; }
+      if (String(mobile || '').trim()) entry.mobile = String(mobile).trim();
+      saveTeamSignups({ ...teamSignups, [fx.id]: [...(teamSignups[fx.id] || []), entry] });
+      saveTeamsDb({ ...teamsDb, [name.toLowerCase()]: { name, handicap: entry.handicap, players: squad } });
+      return { entry, fixtureId: fx.id, totalText: homeMoney(entry.fee.total) };
+    },
+    withdraw: (fxId, entryId) => removeTeam(fxId, entryId),
+    mine: homeMyEntries,
+    // Amend an entry from Home: team name, players, mobile. Keeps the entry's
+    // id (the draw points at it) and who booked it; the fee is worked out
+    // again from the new squad. A per-day squad the captain set becomes one
+    // squad for every day — Home edits one team, not one per day.
+    update: (fxId, entryId, { team, handicap, mobile, rows }) => {
+      const fx = fixtures.find(f => f.id === fxId);
+      if (!fx) return { error: 'That tournament is no longer listed.' };
+      const list = teamSignups[fx.id] || [];
+      const prev = list.find(e => e.id === entryId);
+      if (!prev) return { error: 'That entry has already been withdrawn.' };
+      const range = parseFixtureDateRange(fx);
+      if (range && range.start.getTime() <= Date.now()) return { error: 'The tournament has started, so the entry can only be changed by the captain now.' };
+      const name = String(team || '').trim();
+      if (!name) return { error: 'Give your team a name.' };
+      if (list.some(x => x.id !== entryId && (x.team || '').trim().toLowerCase() === name.toLowerCase())) {
+        return { error: `A team called ${name} is already entered. Pick another name.` };
+      }
+      const squad = homeSquadRows(fx, rows);
+      if (!squad.length) return { error: 'Keep at least one player, or withdraw the entry instead.' };
+      const days = {};
+      fixtureDays(fx).forEach(d => { days[d.key] = squad.map(x => ({ ...x })); });
+      const fee = priceTeamEntry(fx, rows);
+      const r2 = (n) => Math.round(n * 100) / 100;
+      const entry = {
+        ...prev, team: name,
+        handicap: handicap === '' || handicap == null || isNaN(parseInt(handicap, 10)) ? null : parseInt(handicap, 10),
+        perDay: false, days,
+        fee: { total: r2(fee.total), days: fee.len, shares: fee.shares.map(x => ({ ...x, share: r2(x.share) })) },
+      };
+      if (String(mobile || '').trim()) entry.mobile = String(mobile).trim(); else delete entry.mobile;
+      saveTeamSignups({ ...teamSignups, [fx.id]: list.map(e => (e.id === entryId ? entry : e)) });
+      saveTeamsDb({ ...teamsDb, [name.toLowerCase()]: { name, handicap: entry.handicap, players: squad } });
+      return { entry, fixtureId: fx.id, totalText: homeMoney(entry.fee.total) };
+    },
+  };
+
+  // The captain's first look: the next session's list, and what is waiting.
+  const homeCaptain = captainMode && homeSessions.length ? (() => {
+    const s = homeSessions[0];
+    const monday = mondayOf(isoOf(new Date()));
+    const lessons = slotsInWeek(lessonSlots, monday).reduce((sum, sl) => sum + (sl.bookings || []).length, 0);
+    return {
+      sessionName: s.name, dateLabel: `${s.dateLabel}, ${s.time}`,
+      players: s.players, chukkas: s.chukkasAsked, cap: s.cap,
+      closes: s.block === 'cutoff' ? `Sign-ups closed ${cutoffLabel(s.key)}` : s.block ? 'Sign-ups closed' : `Sign-ups close ${cutoffLabel(s.key)}`,
+      waiting: 0,
+      lessons, day: s.key,
+    };
+  })() : null;
+
+  // Thursday and Friday ARE the club's Ladies Only and Instructional
+  // sessions, and those are booked from the Lessons diary — so a tap on
+  // either day, here or on the Chukkas tab, opens the diary on the next such
+  // session rather than the day's old chukka list. With none on the diary
+  // yet it opens on that weekday, where the session will appear.
+  const [lessonsFocus, setLessonsFocus] = useState(null);
+  const openDay = (dk) => {
+    const kind = clubSessionForDay(dk);
+    if (!kind) { setActiveDay(dk); setActiveTab('chukkas'); window.scrollTo(0, 0); return; }
+    const today = localISO(new Date());
+    const next = lessonSlots
+      .filter(sl => sl && sl.kind === kind.id && sl.date >= today)
+      .sort((x, y) => (x.date + (x.start || '')).localeCompare(y.date + (y.start || '')))[0];
+    setLessonsFocus({ date: next ? next.date : localISO(nextChukkaDate(dk)), slotId: next ? next.id : '', at: Date.now() });
+    setActiveTab('lessons');
+    window.scrollTo(0, 0);
+  };
+  const homeOpenChukkas = (k) => openDay(k);
+  const homeOpenFixture = (id) => {
+    setActiveTab('fixtures');
+    if (expandedId !== id) toggleFixture(id);
+    setTimeout(() => {
+      const el = document.querySelector(`[data-fixture-id="${id}"]`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
+  };
+  const homeGoCaptain = (area) => {
+    if (area === 'draw' && homeCaptain) { homeOpenChukkas(homeCaptain.day); return; }
+    if (area === 'lessons') setActiveTab('lessons');
+  };
+  const homeDirections = (ground) => {
+    const pin = pinOf(ground);
+    return pin ? directionsUrl(pin) : null;
+  };
+
   return (
     <>
       <style>{`
@@ -4353,6 +5314,14 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         .polo-app.stage-on .header-bg,
         .polo-app.stage-on .tabs,
         .polo-app.stage-on .notice-banner { display: none; }
+        /* Home is drawn dark (see HomeDashboard.jsx); the page around it
+           follows so it does not sit in a cream frame. */
+        .polo-app.home-on { background: #120d0b; }
+        .polo-app.home-on .app-footer { background: #120d0b !important; border-top-color: #3d2e24 !important; color: #9c8d77 !important; }
+        .polo-app.home-on .app-footer button { color: #9c8d77 !important; }
+        .polo-app.home-on .refresh-fab { background: #1f1714 !important; border-color: #b8924a !important; color: #d4a85a !important; }
+        /* The booking sheet covers the screen; nothing floats over it. */
+        body.hd-sheet-open .refresh-fab { display: none !important; }
         .display { font-family: 'Fraunces', Georgia, serif; font-weight: 500; }
         .display-italic { font-family: 'Fraunces', Georgia, serif; font-style: italic; font-weight: 400; }
         .label-eyebrow {
@@ -4572,7 +5541,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         .input-field:focus {
           outline: none;
           border-color: var(--burgundy);
-          background: white;
+          /* background-color, not background: the shorthand would wipe a
+             select's arrow, or with the dark theme tile it across the box. */
+          background-color: white;
           box-shadow: 0 0 0 3px rgba(107, 31, 42, 0.10);
         }
         .input-field::placeholder { color: #b8ad8e; }
@@ -5562,7 +6533,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         .reveal { animation: fadeInScale 0.4s ease-out; }
       `}</style>
 
-      <div className={`polo-app${stageMode ? ' stage-on' : ''}`}>
+      <style>{LUX_CSS}</style>
+      <div className={`polo-app lux${stageMode ? ' stage-on' : ''}${activeTab === 'home' ? ' home-on' : ''}`}>
         {/* Desktop fixture board. Renders only above the breakpoint and only in
             captain mode; every edit goes through the same updaters the phone
             editor uses, so the two views cannot diverge. */}
@@ -5734,9 +6706,19 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             posing as peers of the member ones. On a phone the same markup is
             restyled into a bottom bar — see the .tabs media query. */}
         <nav className="tabs">
-          <button className={`tab-btn ${activeTab === 'chukkas' ? 'active' : ''}`} onClick={() => setActiveTab('chukkas')}>
-            <span className="tab-icon" aria-hidden="true">🏇</span><span>Chukkas</span>
+          <button className={`tab-btn ${activeTab === 'home' ? 'active' : ''}`} onClick={() => setActiveTab('home')}>
+            <span className="tab-icon" aria-hidden="true">🏠</span><span>Home</span>
           </button>
+          {loggedOn && (
+            <button className={`tab-btn ${activeTab === 'chukkas' ? 'active' : ''}`} onClick={() => setActiveTab('chukkas')}>
+              <span className="tab-icon" aria-hidden="true">🏇</span><span>Chukkas</span>
+            </button>
+          )}
+          {loggedOn && (
+            <button className={`tab-btn ${activeTab === 'lessons' ? 'active' : ''}`} onClick={() => setActiveTab('lessons')}>
+              <span className="tab-icon" aria-hidden="true">🎓</span><span>Lessons</span>
+            </button>
+          )}
           <button className={`tab-btn ${activeTab === 'fixtures' ? 'active' : ''}`} onClick={() => setActiveTab('fixtures')}>
             <span className="tab-icon" aria-hidden="true">📅</span><span>Fixtures</span>
           </button>
@@ -5761,6 +6743,46 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             {playerDb.filter(p => p.active !== false && !(p.name || '').includes('/')).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(p => <option key={p.id} value={p.name} />)}
           </datalist>
 
+          {/* ─── HOME — the member's dashboard ─────────────────────────────── */}
+          {activeTab === 'home' && (
+            <HomeDashboard
+              ready={loaded && authSettled}
+              account={homeAccount}
+              me={homeMeView}
+              onSignIn={(at) => setHomeAuth(at || 'signin')}
+              onSignOut={() => { if (window.auth && window.auth.signOut) window.auth.signOut().catch(() => {}); }}
+              onSavePhoto={(v) => window.auth.savePhoto(v)}
+              profile={auth.profile}
+              handicapOptions={HANDICAP_OPTIONS}
+              onSaveProfile={(p) => window.auth.saveProfile(p)}
+              onChangePassword={(pw) => window.auth.changePassword(pw)}
+              onResetEmail={() => window.auth.sendPasswordReset(auth.user.email)}
+              onLinkProvider={(w) => window.auth.linkProvider(w)}
+              sessions={homeSessions}
+              fixtures={homeFixtures}
+              captain={homeCaptain}
+              quote={homeQuote}
+              book={homeBook}
+              people={homePeople}
+              sessionsFor={(who) => homeSessionsFor(homeWhoRec(who))}
+              undo={homeUndo}
+              manage={homeManage}
+              manageWaiting={!!manageReq && !homeSignedIn}
+              onManageAmend={manageAmend}
+              onManageCancel={manageCancel}
+              onManageClose={() => setManageReq(null)}
+              onOpenTerms={openTerms}
+              openChukkas={homeOpenChukkas}
+              openLessons={() => { setActiveTab('lessons'); window.scrollTo(0, 0); }}
+              tour={homeTour}
+              openFixtures={() => { setActiveTab('fixtures'); window.scrollTo(0, 0); }}
+              openFixture={homeOpenFixture}
+              openLive={() => setActiveTab('live')}
+              goCaptain={homeGoCaptain}
+              directions={homeDirections}
+            />
+          )}
+
           {/* ─── MORE — the captain area, and the way into it ───────────────
               Everything a captain runs is one tap from here rather than four
               tabs crowding the member ones. Gated on captainMode, which with
@@ -5770,7 +6792,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             <div className="reveal" style={{ maxWidth: '460px', margin: '0 auto' }}>
               {captainMode ? (
                 <>
-                  <div className="label-eyebrow" style={{ fontSize: '11px', marginBottom: '12px' }}>Captain area</div>
+                  <div className="label-eyebrow" style={{ fontSize: '11px', marginBottom: '12px' }}>{signInBuild ? 'Admin area' : 'Captain area'}</div>
                   {[
                     { id: 'lessons', icon: '🎓', label: 'Lessons',  blurb: 'Coaching slots and who is booked in', go: () => setActiveTab('lessons') },
                     { id: 'players', icon: '👥', label: 'Players',  blurb: 'The player database and handicaps', go: () => { setPlayersView('players'); setActiveTab('players'); } },
@@ -5795,6 +6817,33 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     Subsidies and Admins sit inside Players.
                   </div>
                 </>
+              ) : signInBuild ? (
+                // Sign-in live: the club is run by its admins, signed in; the
+                // captain PIN only unlocks live scoring.
+                <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                  <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '16px', lineHeight: 1.6 }}>
+                    {auth.user
+                      ? <>You&rsquo;re signed in as <strong style={{ color: 'var(--ink)' }}>{auth.user.email || 'an account with no email'}</strong>, which isn&rsquo;t an admin. The admin area &mdash; players, the draw, teams, payments and the lessons diary &mdash; is for the club&rsquo;s admins: sign in with your admin email, or ask an admin to add this one in Players &rarr; Admins.</>
+                      : <>Running the club? Sign in with your admin account for players, the draw, teams, payments and the lessons diary.</>}
+                  </div>
+                  {!auth.user && (
+                    <button onClick={() => { setActiveTab('home'); setHomeAuth('signin'); }} style={{
+                      background: 'var(--burgundy)', border: '1px solid var(--burgundy)', color: 'var(--cream)',
+                      borderRadius: '6px', padding: '11px 20px', fontSize: '12px', fontWeight: 600,
+                      cursor: 'pointer', letterSpacing: '0.5px', fontFamily: 'inherit', marginBottom: '18px',
+                    }}>Sign in</button>
+                  )}
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: 1.6, borderTop: '1px solid var(--line)', paddingTop: '14px' }}>
+                    {canScore ? 'Live scoring is unlocked on this device.' : 'Scoring a match? The captain PIN unlocks live scoring.'}
+                  </div>
+                  {!canScore && (
+                    <button onClick={() => setPinModalOpen(true)} style={{
+                      background: 'none', border: '1px solid var(--burgundy)', color: 'var(--burgundy)',
+                      borderRadius: '6px', padding: '9px 18px', fontSize: '12px', fontWeight: 600, marginTop: '10px',
+                      cursor: 'pointer', letterSpacing: '0.5px', fontFamily: 'inherit',
+                    }}>Enter scoring PIN</button>
+                  )}
+                </div>
               ) : (
                 <div style={{ textAlign: 'center', padding: '16px 0' }}>
                   <div style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '16px', lineHeight: 1.6 }}>
@@ -5817,7 +6866,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             <button onClick={() => setActiveTab('more')} style={{
               background: 'transparent', border: 0, color: 'var(--muted)', fontSize: '12px',
               cursor: 'pointer', fontFamily: 'inherit', padding: '0 0 12px', letterSpacing: '0.5px',
-            }}>‹ Captain area</button>
+            }}>‹ {signInBuild ? 'Admin area' : 'Captain area'}</button>
           )}
 
           {/* ─── CHUKKAS TAB — day menu + the selected day's booking page ─── */}
@@ -5832,7 +6881,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                       key={dk}
                       type="button"
                       className={`day-menu-btn ${activeDay === dk ? 'active' : ''}`}
-                      onClick={() => setActiveDay(dk)}
+                      onClick={() => openDay(dk)}
                       aria-pressed={activeDay === dk}
                     >
                       <span className="day-menu-day">{cfg.fullLabel}</span>
@@ -6172,6 +7221,32 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                 )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {memberBooking ? (
+                    /* Signed in: you book yourself, or a teammate from the
+                       player database — never a name typed in. */
+                    <div style={{ padding: '12px 14px', background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '4px' }}>
+                      <label htmlFor="booking-for" style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '6px', letterSpacing: '1px', textTransform: 'uppercase' }}>Booking for</label>
+                      {teammates.length > 0 ? (
+                        <select id="booking-for" className="input-field select-field" value={bookingFor} onChange={(e) => setBookingFor(e.target.value)}>
+                          <option value="me">{myName ? `Me — ${myName}` : 'Me'}</option>
+                          {teammates.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}{t.handicap != null ? ` (${fmtH(t.handicap)})` : ''}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div id="booking-for" style={{ fontSize: '16px', fontWeight: 500, color: 'var(--ink)' }}>{myName || '—'}</div>
+                      )}
+                      <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px', lineHeight: 1.45 }}>
+                        {teammates.length > 0
+                          ? <>You can book yourself or anyone in <strong>{myPlayer.team}</strong>.</>
+                          : myPlayer
+                            ? 'Booking as yourself — your details are the club’s record for you.'
+                            : <>Booking as yourself.{' '}
+                                <button type="button" onClick={() => openSignIn('profile')} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--burgundy)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}>Set your name and handicap</button>
+                              </>}
+                      </div>
+                    </div>
+                  ) : (
                   <input
                     className="input-field"
                     type="text"
@@ -6181,7 +7256,8 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     onChange={(e) => setName(e.target.value)}
                     autoComplete="name"
                   />
-                  {suggestions.length > 0 && (
+                  )}
+                  {!memberBooking && suggestions.length > 0 && (
                     <div className="suggestion-row">
                       <span className="suggestion-label">
                         {nameInputLower ? 'Did you mean:' : 'Quick add:'}
@@ -6406,7 +7482,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                         )}
                         <button
                           className="btn-primary"
-                          onClick={handleAdd}
+                          onClick={auth.enabled && !isMember && !captainMode ? () => openSignIn() : handleAdd}
                           disabled={disabled}
                           style={disabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
                         >
@@ -6595,10 +7671,20 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                               <button className="remove-btn" onClick={() => { removePlayer(p.id); setEditingAvailId(null); }} aria-label={`Remove ${p.name}`}>×</button>
                             </>
                           ) : (
-                            <div style={{ fontSize: '13px', color: 'var(--muted)', padding: '6px 10px', minWidth: '60px', textAlign: 'right' }}>
-                              <span style={{ fontWeight: 500, color: 'var(--ink)' }}>{p.chukkas}</span>
-                              <span style={{ marginLeft: '4px' }}>chukka{p.chukkas === 1 ? '' : 's'}</span>
-                            </div>
+                            <>
+                              <div style={{ fontSize: '13px', color: 'var(--muted)', padding: '6px 10px', minWidth: '60px', textAlign: 'right' }}>
+                                <span style={{ fontWeight: 500, color: 'var(--ink)' }}>{p.chukkas}</span>
+                                <span style={{ marginLeft: '4px' }}>chukka{p.chukkas === 1 ? '' : 's'}</span>
+                              </div>
+                              {canRemoveEntry(p) && (() => {
+                                const mine = entryIsMe(p) || sameName(p.name, myName);
+                                const label = mine ? 'Take my name off the list' : `Take ${p.name} off the list`;
+                                return (
+                                  <button className="remove-btn" onClick={() => removeWithCare(p, () => removePlayer(p.id))}
+                                    aria-label={label} title={label}>×</button>
+                                );
+                              })()}
+                            </>
                           )}
                         </div>
                         {/* Inline availability editor — captain only, shown when ⏱ is tapped */}
@@ -7119,9 +8205,21 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                 </div>
               )}
 
+              {/* A month whose fixtures have all been played is archived:
+                  members do not see it, and an admin opens it from the fold
+                  at the foot of the list. */}
+              {(() => {
+                const monthPast = (list) => list.length > 0 && list.every(f => { const rg = parseFixtureDateRange(f); return rg && rg.end.getTime() < Date.now(); });
+                const archived = ALL_MONTHS.filter(m => monthPast(fixtures.filter(f => f.month === m)));
+                const shown = ALL_MONTHS.filter(m => fixtures.some(f => f.month === m) && !archived.includes(m));
+                if (!shown.length) return <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '13px', margin: '28px 0' }}>No fixtures coming up yet.</div>;
+                return null;
+              })()}
               {ALL_MONTHS.filter(m => fixtures.some(f => f.month === m)).map(month => {
                 const monthFixtures = fixtures.filter(f => f.month === month);
                 if (monthFixtures.length === 0) return null;
+                const monthPast = monthFixtures.every(f => { const rg = parseFixtureDateRange(f); return rg && rg.end.getTime() < Date.now(); });
+                if (monthPast && !(captainMode && showFixtureArchive)) return null;
                 return (
                   <div key={month}>
                     <div className="month-header">
@@ -7771,6 +8869,11 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                         </div>
                                       ));
                                     })()}
+                                    {captainMode && s.fee && (
+                                      <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px' }}>
+                                        Entry £{fmtMoney(s.fee.total)}{` · ${s.fee.shares.filter(x => x.member).length} member${s.fee.shares.filter(x => x.member).length === 1 ? '' : 's'}, ${s.fee.shares.filter(x => !x.member).length} non-member${s.fee.shares.filter(x => !x.member).length === 1 ? '' : 's'}`}{s.bookedBy ? ` · entered by ${s.bookedBy}` : ''}
+                                      </div>
+                                    )}
                                     {captainMode && s.contact && (
                                       <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px' }}>
                                         Captain: {s.contact}
@@ -7781,30 +8884,44 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                 ))}
 
                                 {!isPast && !isTournamentActive(fx) && (showTeamForm ? (
+                                  (() => {
+                                    const fee = priceTeamEntry(fx, pricingSquad(fx));
+                                    const money = (v) => `£${fmtMoney(v)}`;
+                                    const sec = { fontSize: '10px', margin: '6px 0 6px' };
+                                    return (
                                   <div className="register-form" style={{ marginTop: '12px' }}>
-                                    <div className="label-eyebrow" style={{ fontSize: '10px', marginBottom: '10px' }}>Enter a team</div>
+                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                      <div className="display" style={{ fontSize: '19px', flex: 1, minWidth: 0 }}>Enter a team</div>
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>{fx.name} · {fx.date} · {fee.len === 2 ? '2 days' : '1 day'}</div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                      <input
-                                        className="input-field"
-                                        list="known-team-names"
-                                        type="text"
-                                        placeholder="Team name"
-                                        value={tName}
-                                        onChange={(e) => onTeamNameChange(fx, e.target.value)}
-                                        style={{ padding: '12px 14px', fontSize: '15px' }}
-                                      />
+                                      <div className="label-eyebrow" style={sec}>Team</div>
+                                      <div style={{ display: 'flex', gap: '8px' }}>
+                                        <input
+                                          className="input-field"
+                                          list="known-team-names"
+                                          type="text"
+                                          aria-label="Team name"
+                                          placeholder="Team name"
+                                          value={tName}
+                                          onChange={(e) => onTeamNameChange(fx, e.target.value)}
+                                          style={{ flex: 1, minWidth: 0, padding: '12px 14px', fontSize: '15px' }}
+                                        />
+                                        <select
+                                          className="input-field select-field"
+                                          aria-label="Team handicap"
+                                          value={tHandicap}
+                                          onChange={(e) => setTHandicap(e.target.value)}
+                                          style={{ width: '96px', flexShrink: 0, padding: '12px 6px', fontSize: '14px' }}
+                                        >
+                                          <option value="">Hcp…</option>
+                                          {TEAM_HANDICAP_OPTIONS.map(h => <option key={h} value={h}>{fmtH(h)}</option>)}
+                                        </select>
+                                      </div>
                                       <datalist id="known-team-names">
                                         {Object.values(knownTeams()).map(t => <option key={t.name} value={t.name} />)}
                                       </datalist>
-                                      <select
-                                        className="input-field select-field"
-                                        value={tHandicap}
-                                        onChange={(e) => setTHandicap(e.target.value)}
-                                        style={{ padding: '12px 14px', fontSize: '15px' }}
-                                      >
-                                        <option value="">Team handicap (optional)…</option>
-                                        {TEAM_HANDICAP_OPTIONS.map(h => <option key={h} value={h}>{fmtH(h)}</option>)}
-                                      </select>
+                                      <div style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: 1.45, marginTop: '-4px' }}>Start typing a team name to pull through its last squad.</div>
 
                                       {fxDays.length > 1 && (
                                         <div className="perday-toggle">
@@ -7814,69 +8931,129 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                                       )}
 
                                       {(tPerDay && fxDays.length > 1 ? fxDays : [fxDays[0]]).map(d => (
-                                        <div key={d.key} className="squad-editor">
-                                          <div className="squad-editor-head">
-                                            {tPerDay && fxDays.length > 1 ? d.label : (fxDays.length > 1 ? 'Squad — both days' : 'Squad')}
-                                          </div>
-                                          {(tSquads[d.key] || []).map((row, idx) => (
-                                            <div key={idx} className="squad-row">
+                                        <div key={d.key}>
+                                          <div className="label-eyebrow" style={sec}>{tPerDay && fxDays.length > 1 ? `Players · ${d.label}` : 'Players'}</div>
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                          {(tSquads[d.key] || []).map((row, idx) => {
+                                            const member = row.member == null ? isClubMember(row.name) : !!row.member;
+                                            return (
+                                            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingBottom: '8px', borderBottom: '1px solid var(--line)' }}>
                                               <input
                                                 className="input-field"
                                                 type="text"
-                                                list="playerdb-names"
+                                                autoComplete="off"
+                                                aria-label={`Player ${idx + 1}`}
                                                 placeholder={`Player ${idx + 1}`}
                                                 value={row.name}
-                                                onChange={(e) => { const v = e.target.value; setSquadPlayer(d.key, idx, 'name', v); const rec = playerDb.find(p => (p.name || '').toLowerCase() === v.trim().toLowerCase()); if (rec && rec.handicap != null) setSquadPlayer(d.key, idx, 'handicap', String(rec.handicap)); }}
-                                                style={{ flex: 1, minWidth: 0, padding: '10px 12px', fontSize: '14px' }}
+                                                onChange={(e) => { const v = e.target.value; const rec = playerDb.find(p => (p.name || '').trim().toLowerCase() === v.trim().toLowerCase()); if (rec) pickSquadPlayer(d.key, idx, { ...rec, name: v }); else { setSquadPlayer(d.key, idx, 'name', v); setSquadPlayer(d.key, idx, 'member', null); } }}
+                                                style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', fontSize: '15px' }}
                                               />
+                                              {(() => {
+                                                const hits = squadSuggestions(row.name, (tSquads[d.key] || []).filter((_, i) => i !== idx).map(x => x.name));
+                                                if (!hits.length) return null;
+                                                return (
+                                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }} role="listbox" aria-label="Matching players">
+                                                    {hits.map(h => (
+                                                      <button key={h.id} type="button" role="option" aria-selected="false" onClick={() => pickSquadPlayer(d.key, idx, h)}
+                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '999px', border: '1px solid var(--line)', background: 'var(--cream-pale)', color: 'var(--ink)', fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                                                        <span>{h.name}</span>
+                                                        {h.handicap != null && h.handicap !== '' && <span style={{ color: 'var(--muted)' }}>{fmtH(Number(h.handicap))}</span>}
+                                                        <span style={{ fontSize: '10px', color: (h.membership || 'none') !== 'none' ? 'var(--burgundy)' : 'var(--muted)' }}>{(h.membership || 'none') !== 'none' ? 'Member' : 'Non-member'}</span>
+                                                      </button>
+                                                    ))}
+                                                  </div>
+                                                );
+                                              })()}
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                               <select
                                                 className="input-field select-field"
+                                                aria-label={`Player ${idx + 1} handicap`}
                                                 value={row.handicap}
                                                 onChange={(e) => setSquadPlayer(d.key, idx, 'handicap', e.target.value)}
-                                                style={{ width: '70px', flexShrink: 0, padding: '10px 4px', fontSize: '14px' }}
+                                                style={{ width: '96px', flexShrink: 0, padding: '9px 6px', fontSize: '14px' }}
                                               >
-                                                <option value="">–</option>
+                                                <option value="">Hcp –</option>
                                                 {HANDICAP_OPTIONS.map(h => <option key={h} value={h}>{fmtH(h)}</option>)}
                                               </select>
-                                              {(tSquads[d.key] || []).length > 1 && (
-                                                <button type="button" className="remove-btn" onClick={() => removeSquadPlayer(d.key, idx)} aria-label="Remove player" style={{ fontSize: '18px', flexShrink: 0 }}>×</button>
+                                              {(
+                                                <button type="button" aria-pressed={member} title="Member or non-member — sets this player's share of the entry"
+                                                  onClick={() => setSquadPlayer(d.key, idx, 'member', !member)}
+                                                  style={{ flexShrink: 0, minWidth: '74px', padding: '9px 6px', borderRadius: '999px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                                                    border: `1px solid ${member ? 'var(--burgundy)' : 'var(--line)'}`, background: member ? 'var(--burgundy)' : 'transparent', color: member ? 'var(--cream)' : 'var(--muted)' }}>
+                                                  {member ? 'Member' : 'Non-member'}
+                                                </button>
                                               )}
+                                              <span style={{ flex: 1 }} />
+                                              {(tSquads[d.key] || []).length > 1 && (
+                                                <button type="button" className="remove-btn" onClick={() => removeSquadPlayer(d.key, idx)} aria-label={`Remove player ${idx + 1}`} style={{ fontSize: '18px', flexShrink: 0 }}>×</button>
+                                              )}
+                                              </div>
                                             </div>
-                                          ))}
-                                          <button type="button" className="add-player-btn" onClick={() => addSquadPlayer(d.key)}>＋ Add player</button>
+                                            );
+                                          })}
+                                          </div>
+                                          <button type="button" className="add-player-btn" onClick={() => addSquadPlayer(d.key)} style={{ marginTop: '8px' }}>＋ Add player</button>
                                         </div>
                                       ))}
 
-                                      <input
-                                        className="input-field"
-                                        type="text"
-                                        placeholder="Team captain name (optional)"
-                                        value={tContact}
-                                        onChange={(e) => setTContact(e.target.value)}
-                                        style={{ padding: '12px 14px', fontSize: '15px' }}
-                                      />
-                                      <input
-                                        className="input-field"
-                                        type="tel"
-                                        placeholder="Captain mobile (optional, captain only)"
-                                        value={tMobile}
-                                        onChange={(e) => setTMobile(e.target.value)}
-                                        style={{ padding: '12px 14px', fontSize: '15px' }}
-                                      />
-                                      <div style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: 1.45, marginTop: '-2px' }}>
-                                        Start typing a team name to pull through last season's squad.{fxDays.length > 1 ? ' Choose “Different per day” if your Saturday and Sunday line-ups differ.' : ''}
+                                      <div className="label-eyebrow" style={sec}>Team captain</div>
+                                      <div style={{ display: 'flex', gap: '8px' }}>
+                                        <input
+                                          className="input-field"
+                                          type="text"
+                                          aria-label="Team captain"
+                                          placeholder="Name (optional)"
+                                          value={tContact}
+                                          onChange={(e) => setTContact(e.target.value)}
+                                          style={{ flex: 1, minWidth: 0, padding: '12px 14px', fontSize: '15px' }}
+                                        />
+                                        <input
+                                          className="input-field"
+                                          type="tel"
+                                          aria-label="Captain mobile"
+                                          placeholder="Mobile (optional)"
+                                          value={tMobile}
+                                          onChange={(e) => setTMobile(e.target.value)}
+                                          style={{ flex: 1, minWidth: 0, padding: '12px 14px', fontSize: '15px' }}
+                                        />
                                       </div>
+
+                                      <div className="label-eyebrow" style={sec}>Entry fee</div>
+                                      <div style={{ fontSize: '13px', padding: '12px 14px', background: 'var(--cream-pale)', border: '1px solid var(--line)', borderRadius: '6px', lineHeight: 1.5 }}>
+                                        {fee.shares.length === 0 ? (
+                                          <div style={{ color: 'var(--muted)' }}>Add the players to see the entry fee. A team of members pays {money(fee.memberFee)}, of non-members {money(fee.nonFee)} ({fee.len === 2 ? '2 days' : '1 day'}); a mixed team pays each player's share.</div>
+                                        ) : (
+                                          <>
+                                            {fee.shares.map((x, k) => (
+                                              <div key={k} style={{ display: 'flex', gap: '8px' }}>
+                                                <span style={{ flex: 1, minWidth: 0 }}>{x.name} <span style={{ color: 'var(--muted)' }}>· {x.member ? 'member' : 'non-member'}</span></span>
+                                                <span>{money(x.share)}</span>
+                                              </div>
+                                            ))}
+                                            <div style={{ display: 'flex', gap: '8px', borderTop: '1px solid var(--line)', marginTop: '6px', paddingTop: '6px', fontWeight: 700 }}>
+                                              <span style={{ flex: 1 }}>Entry fee</span><span>{money(fee.total)}</span>
+                                            </div>
+                                          </>
+                                        )}
+                                        <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px' }}>
+                                          Each player carries a share of their own category’s team fee. You pay the whole entry and collect each player’s share from them. Payable by card once online payment is live — nothing is taken now.
+                                        </div>
+                                      </div>
+
                                       {tError && (
                                         <div style={{ fontSize: '12px', color: 'var(--danger)', padding: '8px 12px', background: '#fbf2f2', borderRadius: '4px', borderLeft: '3px solid var(--danger)' }}>
                                           {tError}
                                         </div>
                                       )}
                                       <div style={{ display: 'flex', gap: '8px' }}>
-                                        <button className="btn-primary" onClick={() => registerTeam(fx)} style={{ flex: 1, padding: '13px', fontSize: '12px' }}>Enter Team</button>
+                                        <button className="btn-primary" onClick={() => registerTeam(fx)} style={{ flex: 1, padding: '13px', fontSize: '12px' }}>{fee.total > 0 ? `Enter team — ${money(fee.total)}` : 'Enter team'}</button>
                                         <button onClick={() => setShowTeamForm(false)} style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', padding: '13px 16px', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
                                       </div>
+                                      <TermsLine onOpen={openTerms} style={{ fontSize: '11px', color: 'var(--muted)', textAlign: 'center' }} />
                                     </div>
                                   </div>
+                                    );
+                                  })()
                                 ) : (
                                   <button className="enter-team-btn" onClick={() => { resetTeamForm(fx); setShowTeamForm(true); }}>
                                     ＋ Enter a team for this fixture
@@ -8044,6 +9221,15 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                   </div>
                 );
               })}
+              {captainMode && ALL_MONTHS.some(m => { const l = fixtures.filter(f => f.month === m); return l.length > 0 && l.every(f => { const rg = parseFixtureDateRange(f); return rg && rg.end.getTime() < Date.now(); }); }) && (
+                <div style={{ textAlign: 'center', margin: '34px 0 6px' }}>
+                  <button type="button" onClick={() => setShowFixtureArchive(v => !v)} aria-expanded={showFixtureArchive}
+                    style={{ background: 'transparent', border: '1px solid var(--line)', color: 'var(--muted)', padding: '10px 16px', borderRadius: '999px', fontSize: '12px', letterSpacing: '0.5px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                    {showFixtureArchive ? 'Hide previous fixtures ▴' : 'Previous fixtures ▾'}
+                  </button>
+                  <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px' }}>Archived — only admins see these.</div>
+                </div>
+              )}
 
               <div style={{ textAlign: 'center', marginTop: '28px', padding: '18px 0 4px', borderTop: '1px solid var(--line)' }}>
                 <div className="display-italic" style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '10px' }}>
@@ -8391,6 +9577,9 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
                 <button onClick={() => setPlayersView('players')} style={{ flex: 1, minWidth: '70px', padding: '9px 4px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, letterSpacing: '0.3px', textTransform: 'uppercase', cursor: 'pointer', border: playersView === 'players' ? 'none' : '1px solid var(--line)', background: playersView === 'players' ? 'var(--burgundy)' : 'transparent', color: playersView === 'players' ? 'var(--cream)' : 'var(--muted)' }}>Players</button>
                 <button onClick={() => setPlayersView('subsidies')} style={{ flex: 1, minWidth: '70px', padding: '9px 4px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, letterSpacing: '0.3px', textTransform: 'uppercase', cursor: 'pointer', border: playersView === 'subsidies' ? 'none' : '1px solid var(--line)', background: playersView === 'subsidies' ? 'var(--burgundy)' : (lowSubsidies.length > 0 ? '#fbf2f2' : 'transparent'), color: playersView === 'subsidies' ? 'var(--cream)' : (lowSubsidies.length > 0 ? 'var(--danger)' : 'var(--muted)') }}>Subsidies{lowSubsidies.length > 0 ? ` (${lowSubsidies.length})` : ''}</button>
+                {auth.enabled && isAdmin && (
+                  <button onClick={() => setPlayersView('admins')} style={{ flex: 1, minWidth: '70px', padding: '9px 4px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, letterSpacing: '0.3px', textTransform: 'uppercase', cursor: 'pointer', border: playersView === 'admins' ? 'none' : '1px solid var(--line)', background: playersView === 'admins' ? 'var(--burgundy)' : 'transparent', color: playersView === 'admins' ? 'var(--cream)' : 'var(--muted)' }}>Admins</button>
+                )}
               </div>
 
               {playersView === 'players' && (<>
@@ -8444,12 +9633,26 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                     </div>
                     <input className="input-field" type="email" placeholder="Email" value={playerEditor.email} onChange={e => setPlayerEditor({ ...playerEditor, email: e.target.value })} style={{ padding: '11px 13px', fontSize: '14px' }} />
                     <input className="input-field" type="tel" placeholder="Mobile" value={playerEditor.mobile} onChange={e => setPlayerEditor({ ...playerEditor, mobile: e.target.value })} style={{ padding: '11px 13px', fontSize: '14px' }} />
+                    {auth.enabled && isAdmin && (() => {
+                      const em = (playerEditor.email || '').trim().toLowerCase();
+                      const fixed = !!em && fixedAdminEmails.includes(em);
+                      return (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--ink)', cursor: fixed || !em ? 'default' : 'pointer' }}>
+                          <input type="checkbox" checked={fixed || !!playerEditor.isAdmin} disabled={fixed || !em}
+                            onChange={e => setPlayerEditor({ ...playerEditor, isAdmin: e.target.checked })} />
+                          Admin — runs the club in the app
+                          <span style={{ color: 'var(--muted)', fontSize: '11px' }}>
+                            {fixed ? '(always — set in the deployment)' : !em ? '(needs an email)' : ''}
+                          </span>
+                        </label>
+                      );
+                    })()}
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: 'var(--ink)', cursor: 'pointer' }}>
                       <input type="checkbox" checked={!!playerEditor.student} onChange={e => setPlayerEditor({ ...playerEditor, student: e.target.checked })} />
                       Student (eligible for subsidies)
                     </label>
                     {playerEditor.student && (
-                      <input className="input-field" type="text" placeholder="Regiment / unit (optional)" value={playerEditor.unit} onChange={e => setPlayerEditor({ ...playerEditor, unit: e.target.value })} style={{ padding: '11px 13px', fontSize: '14px' }} />
+                      <input className="input-field" type="text" aria-label="Regiment or unit" placeholder="Regiment / unit (optional)" value={playerEditor.unit} onChange={e => setPlayerEditor({ ...playerEditor, unit: e.target.value })} style={{ padding: '11px 13px', fontSize: '14px' }} />
                     )}
                     {playerEditor.student && (
                       <div style={{ border: '1px solid var(--line)', borderRadius: '6px', padding: '10px 12px', background: '#fff' }}>
@@ -8558,6 +9761,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                           <span style={{ marginLeft: 'auto', display: 'flex', gap: '5px' }}>
                             {!membershipById(p.membership || 'none').chukkasIncluded && <span title="Pays per chukka — no chukka-inclusive membership" style={{ fontSize: '9px', fontWeight: 700, letterSpacing: '0.5px', color: 'var(--muted)', border: '1px solid var(--line)', padding: '2px 6px', borderRadius: '3px' }}>£/chukka</span>}
                             {p.student && <span style={{ fontSize: '9px', fontWeight: 700, letterSpacing: '0.5px', color: 'var(--cream)', background: 'var(--gold)', padding: '2px 6px', borderRadius: '3px', textTransform: 'uppercase' }}>Stu</span>}
+                            {auth.enabled && isAdminEmail(p.email) && <span title="Admin — runs the club in the app" style={{ fontSize: '9px', fontWeight: 700, letterSpacing: '0.5px', color: 'var(--cream)', background: 'var(--burgundy)', padding: '2px 6px', borderRadius: '3px', textTransform: 'uppercase' }}>Admin</span>}
                             {p.active === false && <span style={{ fontSize: '9px', fontWeight: 700, letterSpacing: '0.5px', color: 'var(--muted)', border: '1px solid var(--line)', padding: '2px 6px', borderRadius: '3px', textTransform: 'uppercase' }}>Inactive</span>}
                           </span>
                         </div>
@@ -8573,6 +9777,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               )}
               </>)}
 
+              {playersView === 'admins' && auth.enabled && isAdmin && <AdminsPanel auth={auth} />}
               {playersView === 'subsidies' && (
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '20px', letterSpacing: '0.5px', color: 'var(--burgundy)', textTransform: 'uppercase', marginBottom: '4px' }}>Subsidies</div>
@@ -8660,24 +9865,39 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
             </div>
           )}
 
-          {activeTab === 'lessons' && captainMode && (
+          {activeTab === 'lessons' && loggedOn && (
             <>
-            {/* Logins are being wired up here first, behind the PIN, so each
-                way in can be tried before members see any of it. Sign-in stays
-                switched off for the app at large — see authFirebase.js. */}
-            <SignInTest auth={auth} handicapOptions={HANDICAP_OPTIONS} linkedPlayer={myPlayer} match={myMatch} providerHintFor={providerHintFor} />
+            {/* The sign-in bench is for trying sign-in while it is dormant;
+                with it live, Home is the way in and the bench has no job. */}
+            {captainMode && !auth.enabled && <SignInTest auth={auth} handicapOptions={HANDICAP_OPTIONS} linkedPlayer={myPlayer} match={myMatch} providerHintFor={providerHintFor} />}
+            {/* A signed-in member books themselves: the same board with the
+                captain's tools off, booking as their own record. */}
+            {!captainMode && (
+              <div style={{ maxWidth: '520px', margin: '0 auto 14px', textAlign: 'center' }}>
+                <div className="label-eyebrow" style={{ marginBottom: '6px' }}>Lessons</div>
+                <div style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.55 }}>
+                  {homePlayer
+                    ? 'Pick a day and a time with the coach. The price shows before you book; card payment is coming soon, so nothing is taken now.'
+                    : 'We haven\u2019t matched your sign-in to the club\u2019s player list yet, so you can see the diary but not book from it. The captain can link you from Players.'}
+                </div>
+              </div>
+            )}
             <LessonsBoard
               slots={lessonSlots}
               onSaveSlots={saveLessonSlots}
               captainMode={captainMode}
-              canBookAsSelf={false}
-              myPlayer={null}
+              canBookAsSelf={!!(myPlayer || homePlayer)}
+              myPlayer={homePlayer || myPlayer}
               players={playerDb.filter(p => p.active !== false)}
+              teammates={teammates}
               rates={LESSON_SLOT_RATES}
               quote={quoteLesson}
               onOpenTerms={openTerms}
               onBook={bookLesson}
               onCancelBooking={cancelLessonBooking}
+              onResolveGroup={resolveShortGroup}
+              grounds={GROUND_OPTIONS}
+              focus={lessonsFocus}
             />
             </>
           )}
@@ -8693,7 +9913,6 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               chukkaFeeLabels={{ std: 'Per chukka' }}
               discountKey="studentPonyDiscount"
               discountLabel="Student discount, per chukka"
-              ownPony={false}
               onSave={saveRateCard}
             />
           )}
@@ -8840,11 +10059,40 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               Terms
             </button>
             <span style={{ opacity: 0.3 }}>·</span>
-            {captainMode ? (
+            {auth.enabled && auth.ready && (
+              <>
+                {auth.user ? (
+                  <>
+                    <button
+                      onClick={() => openSignIn('profile')}
+                      title="Your details"
+                      style={{ background: 'none', border: 'none', color: 'var(--burgundy)', fontSize: '10px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+                    >
+                      {(auth.profile && auth.profile.name) || auth.user.email || 'Account'}{isAdmin ? ' · admin' : ''}
+                    </button>
+                    <button
+                      onClick={() => window.auth.signOut()}
+                      style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '10px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', padding: 0, textDecoration: 'underline', textUnderlineOffset: '3px' }}
+                    >
+                      Sign out
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => openSignIn()}
+                    style={{ background: 'none', border: 'none', color: 'var(--burgundy)', fontSize: '10px', letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer', padding: 0, fontWeight: 600 }}
+                  >
+                    Sign in
+                  </button>
+                )}
+                <span style={{ opacity: 0.3 }}>·</span>
+              </>
+            )}
+            {pinUnlocked ? (
               <>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: 'var(--burgundy)', fontWeight: 600 }}>
                   <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--burgundy)', display: 'inline-block' }} />
-                  Captain mode
+                  {signInBuild ? 'Scoring unlocked' : 'Captain mode'}
                 </span>
                 <button
                   onClick={lockCaptainMode}
@@ -8930,12 +10178,28 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
         </button>
 
         {/* PIN modal — captain access */}
-        {needTerms ? (
+        {auth.enabled && (
+          <AuthSheet open={authSheetOpen} onClose={() => setAuthSheetOpen(false)} auth={auth} startAt={authSheetStart} handicapOptions={HANDICAP_OPTIONS} linkedPlayer={myPlayer} providerHintFor={providerHintFor} />
+        )}
+        {/* Home's sign-in. enabled: true makes the real sheet usable while
+            sign-in stays dormant for the app at large — the same trick as the
+            captain's bench (SignInTest.jsx). */}
+        {homeAuth && authInstalled && (
+          <AuthSheet open onClose={() => setHomeAuth(null)} auth={{ ...auth, enabled: true }} startAt={homeAuth}
+            handicapOptions={HANDICAP_OPTIONS} linkedPlayer={myPlayer} providerHintFor={providerHintFor} />
+        )}
+        {needTerms && !actionPage && !homeAuth && !authSheetOpen ? (
           <TermsSheet mode="accept" onAccept={() => window.auth.acceptTerms(TERMS_VERSION)}
             onSignOut={() => { if (window.auth && window.auth.signOut) window.auth.signOut().catch(() => {}); }} />
-        ) : termsOpen ? (
+        ) : termsOpen && !actionPage ? (
           <TermsSheet mode="read" onClose={() => setTermsOpen(false)} onOpenPrivacy={() => { setTermsOpen(false); setPrivacyOpen(true); }} />
         ) : null}
+        {actionPage && (
+          <AuthActionPage action={actionPage}
+            ready={(auth.methods || []).length > 0 && !!(window.auth && window.auth.checkResetCode)}
+            onDone={() => closeActionPage(null)}
+            onRequestNew={() => closeActionPage(actionPage.mode === 'resetPassword' ? 'reset' : 'signin')} />
+        )}
         {pinModalOpen && (
           <div className="share-backdrop" onClick={() => setPinModalOpen(false)}>
             <div className="share-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '340px' }}>
@@ -8945,7 +10209,7 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
               </div>
               <div className="share-body">
                 <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--muted)', lineHeight: 1.55, textAlign: 'center' }}>
-                  Enter the 4-digit captain PIN to unlock team management.
+                  {signInBuild ? 'Enter the 4-digit captain PIN to unlock live scoring.' : 'Enter the 4-digit captain PIN to unlock team management.'}
                 </p>
                 <input
                   type="password"

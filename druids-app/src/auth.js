@@ -27,12 +27,13 @@
 //             flash "sign in" at someone who is already signed in)
 //   methods   which buttons to offer: 'password', 'link', 'google', 'facebook',
 //             'apple'
-//   user      null | { uid, email, displayName, providers }
+//   user      null | { uid, email, displayName, photoURL, providers }
 //             providers are the ways this account can sign in
 //             ('google.com', 'apple.com', 'emailLink', 'password'), which is
 //             how the app can say which way someone used the first time
 //   role      'anon' | 'member' | 'admin'
-//   profile   null | { name, handicap, mobile, hpa } — what the member plays as
+//   profile   null | { name, handicap, mobile, hpa, photo } — what the member
+//             plays as; photo is their own picture (see savePhoto)
 //
 //   signInWithPassword(email, password)
 //   createAccount(email, password)
@@ -45,6 +46,9 @@
 //                                  project hides it; see accountLink.js
 //   signOut()
 //   saveProfile({ name, handicap, mobile, hpa })
+//   savePhoto(dataUrl | 'none' | '')   '' goes back to the sign-in's photo
+//   changePassword(pw)             sets it, or adds one to a Google/Apple account
+//   idToken() → string             the signed-in user's Firebase ID token, or ''
 //   acceptTerms(version)           records acceptance of the booking terms on the profile
 //   listAdmins() → [email]         admins only
 //   setAdmins([email])             admins only
@@ -76,6 +80,9 @@ export const noAuth = {
   existingMethodsFor: async () => [],
   signOut: async () => {},
   saveProfile: notEnabled,
+  savePhoto: notEnabled,
+  changePassword: notEnabled,
+  idToken: async () => '',
   acceptTerms: notEnabled,
   listAdmins: async () => [],
   setAdmins: notEnabled,
@@ -99,6 +106,10 @@ export const authSnapshot = () => {
     profileReady: a.profileReady !== false,
     // Admins fixed by the deployment's configuration, never removable in-app.
     fixedAdmins: (a.fixedAdmins || []).map((e) => String(e).toLowerCase()),
+    // A sign-in link waiting for its address, or one that failed — the app
+    // finishes both on its own screen (AuthActionPage.jsx).
+    pendingLink: !!a.pendingLink,
+    linkError: a.linkError || '',
   };
 };
 
@@ -120,6 +131,8 @@ export const authErrorText = (err) => {
     'auth/invalid-credential': 'Wrong email or password — try again, or send yourself a sign-in link.',
     'auth/email-already-in-use': 'There is already an account with that email. Sign in instead.',
     'auth/weak-password': 'Please choose a password of at least 6 characters.',
+    'auth/requires-recent-login': 'For your security, that needs a fresh sign-in. Sign out and back in, then try again — or use the reset email.',
+    'auth/provider-already-linked': 'This account already has a password.',
     'auth/too-many-requests': 'Too many attempts — wait a minute and try again.',
     'auth/popup-closed-by-user': 'The sign-in window was closed before finishing.',
     'auth/popup-blocked': 'Your browser blocked the sign-in window. Allow pop-ups for this site, or use email.',
