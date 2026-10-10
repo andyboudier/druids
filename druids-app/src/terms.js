@@ -10,13 +10,21 @@
 
 export const TERMS_VERSION = '2026-10-draft-3';
 
-// Who the terms are for, and how the sheet looks (TermsSheet.jsx reads it).
+// Who the club is, and how its dark screens look. TermsSheet.jsx, the Home
+// dashboard (HomeDashboard.jsx, luxTheme.js), the email-link page
+// (AuthActionPage.jsx) and the emails (api/_club.js) all read it, so those
+// files are the same in every app and only this block changes from club to
+// club. `slug` prefixes this app's own device keys and calendar files;
+// `burgundy` is the app's own --burgundy, which the dark theme re-points at
+// gold wherever it is written inline; `colors` is the dark palette (card2 a
+// raised card, dim the footer).
 export const TERMS_CLUB = {
-  name: 'Druids Lodge Polo Club',
+  name: 'Druids Lodge Polo Club', short: 'Druids Lodge', place: 'Salisbury, Wiltshire', slug: 'druids',
   crest: '/crest.svg', crestRound: false,
+  burgundy: '#231F20',
   colors: {
-    bg: '#0d0c0c', card: '#231f20', line: '#3a3634', burg: '#3a3634',
-    gold: '#c9910f', gold2: '#fbb415', cream: '#faf9f7', muted: '#b5afa9',
+    bg: '#0d0c0c', card: '#231f20', card2: '#2e2a2b', line: '#3a3634', burg: '#3a3634',
+    gold: '#c9910f', gold2: '#fbb415', cream: '#faf9f7', muted: '#b5afa9', dim: '#8f8985',
   },
 };
 export const TERMS_DRAFT = true; // shows "Draft — awaiting committee review"

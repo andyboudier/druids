@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Capacitor } from '@capacitor/core';
 import './storage'; // attaches window.storage backed by Firestore
-import { signInReturning, installClubAuth } from './authFirebase';
+import { signInReturning, installClubAuth, SIGN_IN_LIVE } from './authFirebase';
 import DruidsApp from './DruidsApp.jsx';
 
 // Sign-in is dormant for the club, and the auth SDK is only fetched when a
@@ -10,7 +10,10 @@ import DruidsApp from './DruidsApp.jsx';
 // wait for that is the tail of a sign-in itself: coming back from a provider's
 // redirect, or opening an emailed sign-in link. signInReturning() answers that
 // without touching firebase/auth, so the ordinary cold start is unchanged.
-if (signInReturning()) installClubAuth();
+// With sign-in live the provider is needed from the first paint: every
+// gate — who may book, who is an admin — reads it, and the dormant default
+// would otherwise let the captain PIN open the admin side until it woke.
+if (SIGN_IN_LIVE || signInReturning()) installClubAuth();
 
 // Vercel Web Analytics: page views and visitor counts, no cookies, nothing
 // personal. Only on the web — the native app is served from its own bundle

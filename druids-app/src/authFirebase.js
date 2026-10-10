@@ -17,12 +17,20 @@
 // console, the providers under Authentication → Sign-in method. Until one is
 // enabled there its button returns auth/operation-not-allowed, which
 // authErrorText renders as "That sign-in method is not switched on yet."
-export const SIGN_IN_LIVE = false;
+//
+// A build can switch it on without touching this file: VITE_SIGN_IN_LIVE=1.
+// That is how TPPC-Dev runs with sign-in live while the club's own build,
+// which sets nothing, stays dormant — the same pattern as VITE_FIREBASE_* in
+// firebase.js, so this file stays identical in both repos.
+const env = import.meta.env || {};
+export const SIGN_IN_LIVE = env.VITE_SIGN_IN_LIVE === '1';
 
 // Emails that are admins whatever the config/admins document says — the way
 // back in if the document is ever emptied by accident. The club fills this in
-// when sign-in goes live.
-export const FIXED_ADMIN_EMAILS = [];
+// when sign-in goes live; a build may name them in VITE_FIXED_ADMIN_EMAILS,
+// comma-separated, so the addresses live in the deployment and not the code.
+export const FIXED_ADMIN_EMAILS = String(env.VITE_FIXED_ADMIN_EMAILS || '')
+  .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
 
 // Which buttons the sheet offers, and it should name only what is switched on
 // in the club's Firebase console — a button for a method that is off is a dead
@@ -44,6 +52,7 @@ import { app, db } from './firebase';
 // would buy nothing anyway — storage.js has already loaded this module.
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { announceAuthChange } from './auth';
+import { emailAction, clearEmailAction } from './emailAction';
 
 const LINK_EMAIL_KEY = 'polo-signin-link-email';
 const ADMINS_DOC = ['config', 'admins'];
@@ -84,9 +93,44 @@ const provider = {
     needAuth();
     await FA.createUserWithEmailAndPassword(fbAuth, email, password);
   },
+  // The link comes back to the app, which sets the new password on its own
+  // screen (see emailAction and AuthActionPage.jsx). Where the Firebase
+  // console's action URL still points at Firebase's page, `url` is where its
+  // "Continue" button returns.
   async sendPasswordReset(email) {
     needAuth();
-    await FA.sendPasswordResetEmail(fbAuth, email);
+    await FA.sendPasswordResetEmail(fbAuth, email, { url: window.location.origin + '/' });
+  },
+
+  // ── Links from emails, finished inside the app ───────────────────────────
+  // A reset link: who it is for (and whether it is still good).
+  async checkResetCode(code) {
+    needAuth();
+    return FA.verifyPasswordResetCode(fbAuth, code);
+  },
+  // Set the new password, then sign straight in with it — the member asked to
+  // get back in, not to be sent to a sign-in screen to type it again.
+  async finishReset(code, newPassword, email) {
+    needAuth();
+    await FA.confirmPasswordReset(fbAuth, code, newPassword);
+    if (email) await FA.signInWithEmailAndPassword(fbAuth, email, newPassword);
+  },
+  // Confirm or restore an email address.
+  async applyEmailCode(code) {
+    needAuth();
+    await FA.applyActionCode(fbAuth, code);
+    if (fbAuth.currentUser) await fbAuth.currentUser.reload().catch(() => {});
+  },
+  // A sign-in link opened on a different device from the one that asked for
+  // it: the address was not remembered here, so the app asks for it on its
+  // own screen and finishes the sign-in with it.
+  async finishLinkSignIn(email) {
+    needAuth();
+    await FA.signInWithEmailLink(fbAuth, String(email || '').trim(), window.location.href);
+    try { localStorage.removeItem(LINK_EMAIL_KEY); } catch (e) { /* ignore */ }
+    provider.pendingLink = false;
+    clearEmailAction();
+    announceAuthChange();
   },
   // The link brings the visitor back to this same page; completeLinkSignIn()
   // finishes the job on the way back in. The email is kept on the device so
@@ -140,6 +184,31 @@ const provider = {
     provider.user = snapshotUser(fbAuth.currentUser);
     announceAuthChange();
   },
+  // A fresh ID token for the signed-in user, for the app's own endpoints
+  // (/api/booking-email) to check who is asking. '' when nobody is.
+  async idToken() {
+    const u = fbAuth && fbAuth.currentUser;
+    return u ? u.getIdToken() : '';
+  },
+  // Set a new password, or add one to an account that began with Google or
+  // Apple so the member can also sign in with their email. Firebase asks for
+  // a recent sign-in before either; the caller shows authErrorText for
+  // auth/requires-recent-login and offers the reset email instead.
+  async changePassword(newPassword) {
+    needAuth();
+    const u = fbAuth.currentUser;
+    if (!u) throw new Error('Sign in first.');
+    const pw = String(newPassword || '');
+    if (pw.length < 8) throw new Error('Use at least 8 characters.');
+    const hasPassword = (u.providerData || []).some((d) => d && d.providerId === 'password');
+    if (hasPassword) await FA.updatePassword(u, pw);
+    else {
+      if (!u.email) throw new Error('This account has no email address to set a password on.');
+      await FA.linkWithCredential(u, FA.EmailAuthProvider.credential(u.email, pw));
+    }
+    provider.user = snapshotUser(fbAuth.currentUser);
+    announceAuthChange();
+  },
   // Which ways in this account already has. Firebase's own answer is the
   // authoritative one; it is empty when the project has email-enumeration
   // protection on, which is why the club's player record keeps its own copy
@@ -169,14 +238,29 @@ const provider = {
     announceAuthChange();
   },
   // The member's acceptance of the club's booking terms (terms.js): the
-  // version and when. On the private profile, and it leaves `updated` alone —
-  // it is not part of the profile ↔ record reconcile.
+  // version and when. On the private profile, and like savePhoto it leaves
+  // `updated` alone — it is not part of the profile ↔ record reconcile.
   async acceptTerms(version) {
     needAuth();
     if (!provider.user) throw new Error('Sign in first.');
     const v = { termsVersion: String(version || ''), termsAcceptedAt: Date.now() };
     await setDoc(doc(db, 'users', provider.user.uid), v, { merge: true });
     provider.profile = { ...(provider.profile || {}), ...v };
+    announceAuthChange();
+  },
+  // The member's own picture, on their private profile: a small data URL
+  // (the app shrinks it first), or 'none' to show initials instead of the
+  // sign-in's photo, or '' to go back to the sign-in's photo. Kept apart from
+  // saveProfile on purpose — it must not move `updated`, which is what the
+  // profile ↔ player-record reconcile compares.
+  async savePhoto(photo) {
+    needAuth();
+    if (!provider.user) throw new Error('Sign in first.');
+    const value = String(photo || '');
+    if (value && value !== 'none' && !/^data:image\/(jpeg|png|webp);base64,/.test(value)) throw new Error('That is not a picture.');
+    if (value.length > 300000) throw new Error('That picture is too large.');
+    await setDoc(doc(db, 'users', provider.user.uid), { photo: value }, { merge: true });
+    provider.profile = { ...(provider.profile || {}), photo: value };
     announceAuthChange();
   },
   async listAdmins() {
@@ -228,8 +312,7 @@ const clearRedirect = () => { try { sessionStorage.removeItem(REDIRECT_KEY); } c
 // anything.
 export function signInReturning() {
   try { if (sessionStorage.getItem(REDIRECT_KEY)) return true; } catch (e) { /* ignore */ }
-  const s = String(window.location.href || '');
-  return s.includes('mode=signIn') && s.includes('oobCode=');
+  return !!emailAction();
 }
 
 // The fields the app renders from, plus the providers this account can sign
@@ -239,6 +322,10 @@ const snapshotUser = (u) => (u ? {
   uid: u.uid,
   email: u.email || '',
   displayName: u.displayName || '',
+  // The picture the sign-in brought with it — Google gives one, Apple and a
+  // password never do. A photo the member sets is kept on their profile and
+  // wins over this; see savePhoto.
+  photoURL: u.photoURL || ((u.providerData || []).find((d) => d && d.photoURL) || {}).photoURL || '',
   providers: (u.providerData || []).map((d) => d && d.providerId).filter(Boolean),
 } : null);
 
@@ -280,15 +367,18 @@ async function completeLinkSignIn() {
   if (!FA.isSignInWithEmailLink(fbAuth, window.location.href)) return;
   let email = '';
   try { email = localStorage.getItem(LINK_EMAIL_KEY) || ''; } catch (e) { /* ignore */ }
-  if (!email) email = window.prompt('Confirm the email address the sign-in link was sent to') || '';
-  if (!email) return;
+  // Opened on another device: no address was kept here. The app asks for it
+  // on its own screen (AuthActionPage.jsx) rather than a browser prompt.
+  if (!email) { provider.pendingLink = true; announceAuthChange(); return; }
   try {
     await FA.signInWithEmailLink(fbAuth, email, window.location.href);
     try { localStorage.removeItem(LINK_EMAIL_KEY); } catch (e) { /* ignore */ }
     // Drop the one-time code from the address bar.
-    window.history.replaceState({}, '', window.location.origin + window.location.pathname);
+    clearEmailAction();
   } catch (e) {
     console.error('Sign-in link failed', e);
+    provider.linkError = (e && e.code) || 'auth/invalid-action-code';
+    announceAuthChange();
   }
 }
 
