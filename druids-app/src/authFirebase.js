@@ -188,7 +188,7 @@ const provider = {
   // (/api/booking-email) to check who is asking. '' when nobody is.
   async idToken() {
     const u = fbAuth && fbAuth.currentUser;
-    return u ? u.getIdToken() : '';
+    return u && !u.isAnonymous ? u.getIdToken() : '';
   },
   // Set a new password, or add one to an account that began with Google or
   // Apple so the member can also sign in with their email. Firebase asks for
@@ -318,7 +318,11 @@ export function signInReturning() {
 // The fields the app renders from, plus the providers this account can sign
 // in with — that last one is what lets the app tell someone which way they
 // used the first time.
-const snapshotUser = (u) => (u ? {
+// An anonymous session is not a member. Druids and Vaux sign the app in
+// anonymously so that Firestore accepts its writes (firebase.js); that user
+// has no email and no name, and must read as signed out here, or Home would
+// greet every visitor as a member it cannot match.
+const snapshotUser = (u) => (u && !u.isAnonymous ? {
   uid: u.uid,
   email: u.email || '',
   displayName: u.displayName || '',
@@ -401,7 +405,7 @@ export function installClubAuth() {
       provider.user = snapshotUser(u);
       provider.role = computeRole();
       provider.ready = true;
-      watchProfile(u ? u.uid : null);
+      watchProfile(u && !u.isAnonymous ? u.uid : null);
       announceAuthChange();
     });
     return provider;

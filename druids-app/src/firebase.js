@@ -39,16 +39,24 @@ export const db = getFirestore(app);
 // set/delete, so the first write of a session cannot race sign-in and get
 // rejected. It resolves rather than rejects on failure: reads still work, and a
 // failed write then surfaces through the caller's own error handling.
+//
+// With member sign-in live (authFirebase.js) the two share one Firebase Auth
+// session: a member's sign-in replaces the anonymous user, and signing out
+// leaves no user at all — so the anonymous sign-in runs whenever the state
+// settles on nobody, not just once at start. On a cold start the SDK has
+// already applied any Google or Apple redirect before the first state is
+// reported, so an anonymous session never displaces a member on their way
+// back in. authFirebase.js reads an anonymous user as signed out.
 export const auth = getAuth(app);
 
 export const authReady = new Promise((resolve) => {
   onAuthStateChanged(auth, (user) => {
-    if (user) resolve(user);
-  });
-  signInAnonymously(auth).catch((err) => {
-    // Most likely cause: the Anonymous provider is not enabled in the Firebase
-    // console (Authentication → Sign-in method → Anonymous → Enable).
-    console.error('Anonymous sign-in failed — writes will be rejected.', err);
-    resolve(null);
+    if (user) { resolve(user); return; }
+    signInAnonymously(auth).catch((err) => {
+      // Most likely cause: the Anonymous provider is not enabled in the Firebase
+      // console (Authentication → Sign-in method → Anonymous → Enable).
+      console.error('Anonymous sign-in failed — writes will be rejected.', err);
+      resolve(null);
+    });
   });
 });
