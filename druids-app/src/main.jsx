@@ -20,12 +20,14 @@ if (signInReturning()) installClubAuth();
 if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
   window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
   // Opened from the store app, a visit looks like Safari: the app's web view
-  // loads this same site. Tag those so Analytics can tell the iPhone and
-  // Android apps from the browser — UTM source ios-app or android-app.
+  // loads this same site. Record those under the page /ios-app or
+  // /android-app instead of /, so the Pages list in Analytics tells the
+  // apps from the browser. (UTM source would be tidier, but Vercel keeps
+  // that breakdown behind a paid add-on; the path is in the free plan.)
   if (Capacitor.isNativePlatform()) {
-    const via = `${Capacitor.getPlatform()}-app`;
+    const via = `/${Capacitor.getPlatform()}-app`;
     window.va('beforeSend', (event) => {
-      try { const u = new URL(event.url); u.searchParams.set('utm_source', via); return { ...event, url: u.toString() }; }
+      try { const u = new URL(event.url); u.pathname = via; return { ...event, url: u.toString() }; }
       catch (e) { return event; }
     });
   }
