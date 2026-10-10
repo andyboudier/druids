@@ -19,6 +19,16 @@ if (signInReturning()) installClubAuth();
 // quietly until then). Numbers are read in Vercel → the project → Analytics.
 if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
   window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  // Opened from the store app, a visit looks like Safari: the app's web view
+  // loads this same site. Tag those so Analytics can tell the iPhone and
+  // Android apps from the browser — UTM source ios-app or android-app.
+  if (Capacitor.isNativePlatform()) {
+    const via = `${Capacitor.getPlatform()}-app`;
+    window.va('beforeSend', (event) => {
+      try { const u = new URL(event.url); u.searchParams.set('utm_source', via); return { ...event, url: u.toString() }; }
+      catch (e) { return event; }
+    });
+  }
   const va = document.createElement('script');
   va.defer = true; va.src = '/_vercel/insights/script.js';
   document.head.appendChild(va);
