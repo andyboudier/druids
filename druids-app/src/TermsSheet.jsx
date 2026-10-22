@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TERMS_SECTIONS, TERMS_SUMMARY, TERMS_DRAFT, TERMS_CLUB } from './terms';
+import { PRIVACY_SECTIONS, PRIVACY_DRAFT, PRIVACY_UPDATED } from './privacy';
 
 // The booking terms, full screen in the club's dark look.
 //   mode 'read'   — the terms, with a close button (footer link, booking
@@ -7,6 +8,7 @@ import { TERMS_SECTIONS, TERMS_SUMMARY, TERMS_DRAFT, TERMS_CLUB } from './terms'
 //   mode 'accept' — first sign-in, or new terms: the key points, the full
 //                   text a tap away, and an unticked "I accept" box. Continue
 //                   stays off until it is ticked; the member may sign out.
+//   doc 'privacy' — the privacy notice instead (privacy.js), read only.
 
 // The club's name, crest and dark colours come from its own terms.js, so this
 // file is the same in every app.
@@ -16,20 +18,25 @@ const primary = (on) => ({
   fontFamily: "'Fraunces', Georgia, serif", fontSize: 20, cursor: on ? 'pointer' : 'default', opacity: on ? 1 : 0.5,
 });
 
-function FullTerms() {
+// A line starting "• " is a bullet.
+function FullTerms({ sections = TERMS_SECTIONS }) {
   return (
     <div style={{ marginTop: 8 }}>
-      {TERMS_SECTIONS.map(s => (
+      {sections.map(s => (
         <section key={s.h} style={{ marginTop: 22 }}>
           <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 500, fontSize: 19, margin: '0 0 8px', color: C.cream }}>{s.h}</h2>
-          {s.p.map((t, i) => <p key={i} style={{ fontSize: 14, lineHeight: 1.6, color: C.muted, margin: '0 0 10px' }}>{t}</p>)}
+          {s.p.map((t, i) => (t.startsWith('• ')
+            ? <p key={i} style={{ fontSize: 14, lineHeight: 1.6, color: C.muted, margin: '0 0 8px', paddingLeft: 16, textIndent: -12 }}>• {t.slice(2)}</p>
+            : <p key={i} style={{ fontSize: 14, lineHeight: 1.6, color: C.muted, margin: '0 0 10px' }}>{t}</p>))}
         </section>
       ))}
     </div>
   );
 }
 
-export default function TermsSheet({ mode = 'read', onClose, onAccept, onSignOut, onOpenPrivacy }) {
+export default function TermsSheet({ mode = 'read', doc = 'terms', onClose, onAccept, onSignOut, onOpenPrivacy, onOpenTerms }) {
+  const privacy = doc === 'privacy';
+  if (privacy) mode = 'read'; // eslint-disable-line no-param-reassign
   const [ticked, setTicked] = useState(false);
   const [showAll, setShowAll] = useState(mode === 'read');
   const [busy, setBusy] = useState(false);
@@ -60,14 +67,15 @@ export default function TermsSheet({ mode = 'read', onClose, onAccept, onSignOut
           <img src={TERMS_CLUB.crest} alt="" width="56" height="56" style={{ width: 56, height: 56, objectFit: 'contain', ...(TERMS_CLUB.crestRound ? { borderRadius: '50%', background: '#fff', boxShadow: `0 0 0 1.5px ${C.gold}` } : {}) }} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 11, letterSpacing: 2.5, textTransform: 'uppercase', color: C.muted }}>{TERMS_CLUB.name}</div>
-            <h1 id="terms-title" ref={headRef} tabIndex={-1} style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 500, fontSize: 28, margin: 0, outline: 'none' }}>Booking terms</h1>
+            <h1 id="terms-title" ref={headRef} tabIndex={-1} style={{ fontFamily: "'Fraunces', Georgia, serif", fontWeight: 500, fontSize: 28, margin: 0, outline: 'none' }}>{privacy ? 'Privacy notice' : 'Booking terms'}</h1>
           </div>
           {mode === 'read' && (
-            <button type="button" onClick={onClose} aria-label="Close the terms"
+            <button type="button" onClick={onClose} aria-label={privacy ? 'Close the privacy notice' : 'Close the terms'}
               style={{ width: 44, height: 44, borderRadius: '50%', background: C.card, border: `1px solid ${C.line}`, color: C.cream, fontSize: 22, cursor: 'pointer' }}>×</button>
           )}
         </div>
-        {TERMS_DRAFT && (
+        {privacy && <div style={{ marginTop: 10, fontSize: 12, color: C.muted, letterSpacing: 1 }}>Last updated {PRIVACY_UPDATED}</div>}
+        {(privacy ? PRIVACY_DRAFT : TERMS_DRAFT) && (
           <div style={{ marginTop: 14, padding: '8px 12px', borderRadius: 10, border: `1px dashed ${C.gold}`, color: C.gold2, fontSize: 12 }}>
             Draft — awaiting committee review. Points in [square brackets] are still to be decided.
           </div>
@@ -88,9 +96,15 @@ export default function TermsSheet({ mode = 'read', onClose, onAccept, onSignOut
           </>
         )}
 
-        {showAll && <FullTerms />}
+        {showAll && <FullTerms sections={privacy ? PRIVACY_SECTIONS : TERMS_SECTIONS} />}
 
-        {mode === 'read' && onOpenPrivacy && (
+        {privacy && onOpenTerms && (
+          <button type="button" onClick={onOpenTerms}
+            style={{ background: 'none', border: 0, color: C.gold2, fontSize: 14, padding: '6px 0 18px', cursor: 'pointer', fontFamily: 'inherit' }}>
+            The club’s booking terms ›
+          </button>
+        )}
+        {!privacy && mode === 'read' && onOpenPrivacy && (
           <button type="button" onClick={onOpenPrivacy}
             style={{ background: 'none', border: 0, color: C.gold2, fontSize: 14, padding: '6px 0 18px', cursor: 'pointer', fontFamily: 'inherit' }}>
             The club’s privacy notice ›
