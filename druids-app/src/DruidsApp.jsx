@@ -8216,7 +8216,12 @@ const [ponyHire, setPonyHire] = useState(false);  // signup: needs to hire a pon
                 return null;
               })()}
               {ALL_MONTHS.filter(m => fixtures.some(f => f.month === m)).map(month => {
-                const monthFixtures = fixtures.filter(f => f.month === month);
+                // In date order — an ad hoc fixture added later lands where its
+                // date puts it, not at the foot of the month. Undated ones keep
+                // their place after the dated ones.
+                const startOf = (f) => { const r = parseFixtureDateRange(f); return r ? r.start.getTime() : Infinity; };
+                const monthFixtures = fixtures.filter(f => f.month === month).map((f, i) => [f, i])
+                  .sort((a, b) => (startOf(a[0]) - startOf(b[0])) || (a[1] - b[1])).map(x => x[0]);
                 if (monthFixtures.length === 0) return null;
                 const monthPast = monthFixtures.every(f => { const rg = parseFixtureDateRange(f); return rg && rg.end.getTime() < Date.now(); });
                 if (monthPast && !(captainMode && showFixtureArchive)) return null;
