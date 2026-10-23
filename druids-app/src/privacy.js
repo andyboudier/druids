@@ -15,6 +15,9 @@ export const PRIVACY_CLUB = {
   address: 'Druids Lodge, Salisbury, Wiltshire SP3 4UN',
   email: 'abi@druidspolo.co.uk',
   phone: '01722 782597',
+  // Where the club's Firestore database is (Firebase console → Firestore);
+  // '' until someone has looked.
+  dbLocation: '',
   // Whether the club has confirmed it is the data controller (not, say, a
   // parent charity); until then the notice says it is to be confirmed.
   controllerConfirmed: false,
@@ -67,7 +70,7 @@ export const PRIVACY_SECTIONS = [
   ] },
   { h: 'Service providers', p: [
     'We use these companies to run the app. Each acts on our instructions under a data processing agreement.',
-    '• Google (Firebase): sign-in and the database. [Confirm the database location, for example europe-west2 (London).]',
+    `• Google (Firebase): sign-in, and the database, ${C.dbLocation ? `which is in ${C.dbLocation}` : '[confirm the database location, for example europe-west2 (London)]'}.`,
     '• Vercel: hosts the app and the website, and counts visits without cookies.',
     '• Resend: sends the app’s emails.',
     `• Apple and Google: if you choose to sign in with them${C.push ? '; and Apple, Google or Mozilla deliver notifications to your device if you turn them on' : ''}.`,
@@ -76,7 +79,7 @@ export const PRIVACY_SECTIONS = [
   ] },
   { h: 'How long we keep it', p: [
     '• Your account: until you delete it.',
-    '• Each week’s chukka list: replaced when the admin clears it for the next week.',
+    '• Each week’s chukka list: replaced when the admin clears it for the next week. The last 50 versions of the lists are kept so that a mistaken clear can be undone; older ones drop off as new ones are added.',
     '• Lesson, session and tournament bookings: [two years], for the club’s records.',
     '• Payment records: six years, as the law requires.',
     '• Your player record: while you play at the club and for [two years] after, so your handicap and team are there when you come back. Ask and we will delete it sooner.',
