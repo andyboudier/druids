@@ -15,6 +15,9 @@ export const PRIVACY_CLUB = {
   address: 'Druids Lodge, Salisbury, Wiltshire SP3 4UN',
   email: 'abi@druidspolo.co.uk',
   phone: '01722 782597',
+  // Whether the club has confirmed it is the data controller (not, say, a
+  // parent charity); until then the notice says it is to be confirmed.
+  controllerConfirmed: false,
   // Who supplies the club ponies, if anyone outside the club sees riders' names.
   ponySupplier: '',
   // What the club's special rates are kept on the player record for.
@@ -25,7 +28,7 @@ export const PRIVACY_CLUB = {
   officeCopies: false,
 };
 
-export const PRIVACY_UPDATED = '22 October 2026';
+export const PRIVACY_UPDATED = '23 October 2026';
 export const PRIVACY_DRAFT = true;
 
 const C = PRIVACY_CLUB;
@@ -36,7 +39,7 @@ const club = TERMS_CLUB.name;
 export const PRIVACY_SECTIONS = [
   { h: 'Who we are', p: [
     `This notice explains how ${club} (“the club”, “we”) uses your personal information when you use the club’s app and website, book with us, or play at the club. We follow UK GDPR and the Data Protection Act 2018.`,
-    `${C.controller}, ${C.address}, is the data controller. [Committee to confirm the legal entity that is the controller.] For any privacy question, or to use your rights, email ${C.email} or phone ${C.phone}.`,
+    `${C.controller}, ${C.address}, is the data controller.${C.controllerConfirmed ? '' : ' [Committee to confirm the legal entity that is the controller.]'} For any privacy question, or to use your rights, email ${C.email} or phone ${C.phone}.`,
     'The app is built and run for the club by ACT Systems Ltd, which processes your information only on the club’s instructions.',
   ] },
   { h: 'What we collect', p: [
@@ -60,7 +63,7 @@ export const PRIVACY_SECTIONS = [
     '• Your mobile number, email address, membership, rates status and subsidies are shown in the app only to the club’s admins.',
     '• If you book for a teammate, or they book for you, each of you sees the other’s bookings.',
     C.officeCopies && `• The club’s office and admins receive an email${C.push ? ' and a notification' : ''} about every booking.`,
-    C.ponySupplier && `• ${C.ponySupplier}, which supplies the club ponies, may be given the names of riders on club ponies. [Committee to confirm.]`,
+    C.ponySupplier && `• ${C.ponySupplier}, which the club contracts with for pony hire, is given the name of each rider on a club pony and the session they are booked on, so it can provide the pony.`,
   ] },
   { h: 'Service providers', p: [
     'We use these companies to run the app. Each acts on our instructions under a data processing agreement.',
