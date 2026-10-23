@@ -18,6 +18,12 @@ export const PRIVACY_CLUB = {
   // Where the club's Firestore database is (Firebase console → Firestore);
   // '' until someone has looked.
   dbLocation: '',
+  // Whether the club runs waiting lists (TPPC does; Druids and Vaux do not).
+  waitingList: false,
+  // How long records are kept, once the club has decided (null until then,
+  // which leaves the notice's periods in square brackets). yearlyCleanup:
+  // api/cleanup-yearly.js removes old records each November.
+  retention: null,
   // Whether the club has confirmed it is the data controller (not, say, a
   // parent charity); until then the notice says it is to be confirmed.
   controllerConfirmed: false,
@@ -35,6 +41,8 @@ export const PRIVACY_UPDATED = '23 October 2026';
 export const PRIVACY_DRAFT = true;
 
 const C = PRIVACY_CLUB;
+const R = C.retention;
+const yrs = (n) => `${['no', 'one', 'two', 'three', 'four', 'five', 'six'][n] || n} year${n === 1 ? '' : 's'}`;
 const club = TERMS_CLUB.name;
 
 // Sections: a heading and its lines. A line starting "• " is a bullet; a
@@ -78,11 +86,14 @@ export const PRIVACY_SECTIONS = [
     'Vercel and Resend are based in the United States, and Google may process data there. Where information leaves the UK, it is protected by the UK’s adequacy regulations (including the UK–US Data Bridge) or the UK International Data Transfer Addendum.',
   ] },
   { h: 'How long we keep it', p: [
-    '• Your account: until you delete it.',
+    `• Your account: until you delete it, or until the club removes it ${R ? yrs(R.accountYears) : '[three years]'} after you last played.`,
+    `• Your player record: while you play at the club and for ${R ? yrs(R.playerYears) : '[two years]'} after, so your handicap and team are there when you come back. Ask and we will delete it sooner.`,
+    `• Lesson, session and tournament bookings: ${R ? yrs(R.bookingYears) : '[two years]'} after the session, for the club’s records.`,
+    C.waitingList && '• Waiting-list places: until the session has been held.',
+    `• Interest in a fixture and answers to an event: ${R && R.yearlyCleanup ? 'until the end of that season' : '[until the end of that season]'}.`,
     '• Each week’s chukka list: replaced when the admin clears it for the next week. The last 50 versions of the lists are kept so that a mistaken clear can be undone; older ones drop off as new ones are added.',
-    '• Lesson, session and tournament bookings: [two years], for the club’s records.',
-    '• Payment records: six years, as the law requires.',
-    '• Your player record: while you play at the club and for [two years] after, so your handicap and team are there when you come back. Ask and we will delete it sooner.',
+    '• Invoices and payment records: six years, as the law requires. These are kept in the club’s accounts rather than the app.',
+    R && R.yearlyCleanup && `Each November the app removes bookings${C.waitingList ? ', waiting places' : ''} and fixture answers that have passed these times, and lists for the club any player records and accounts that are due to go, so that a person checks them before they are deleted.`,
   ] },
   { h: 'Deleting your account', p: [
     `You can delete your account in the app: Home → Your profile → Delete my account. This removes your sign-in, your profile and picture${C.push ? ', and your notification settings' : ''} straight away. Your bookings and your player record stay with the club for the times above, without the link to your account; email us to have those deleted too.`,
