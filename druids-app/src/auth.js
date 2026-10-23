@@ -110,6 +110,10 @@ export const authSnapshot = () => {
     // finishes both on its own screen (AuthActionPage.jsx).
     pendingLink: !!a.pendingLink,
     linkError: a.linkError || '',
+    // Back from confirming who they are by redirect, to delete the account
+    // (authFirebase.js deleteAccount); and whether it has been deleted.
+    pendingDelete: !!a.pendingDelete,
+    deleted: !!a.deleted,
   };
 };
 
@@ -131,6 +135,7 @@ export const authErrorText = (err) => {
     'auth/invalid-credential': 'Wrong email or password — try again, or send yourself a sign-in link.',
     'auth/email-already-in-use': 'There is already an account with that email. Sign in instead.',
     'auth/weak-password': 'Please choose a password of at least 6 characters.',
+    'auth/user-mismatch': 'That was a different account — confirm with the one you are signed in with.',
     'auth/requires-recent-login': 'For your security, that needs a fresh sign-in. Sign out and back in, then try again — or use the reset email.',
     'auth/provider-already-linked': 'This account already has a password.',
     'auth/too-many-requests': 'Too many attempts — wait a minute and try again.',

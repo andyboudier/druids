@@ -50,7 +50,8 @@ import { app, db } from './firebase';
 // import) keeps every export of firebase/firestore alive, which put ~36 kB
 // gzipped back into the chunk every visitor loads on cold start. Deferring it
 // would buy nothing anyway — storage.js has already loaded this module.
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { announceAuthChange } from './auth';
 import { emailAction, clearEmailAction } from './emailAction';
 
@@ -58,6 +59,56 @@ const LINK_EMAIL_KEY = 'polo-signin-link-email';
 const ADMINS_DOC = ['config', 'admins'];
 
 const lower = (s) => String(s || '').trim().toLowerCase();
+
+// ── Inside the store apps ──────────────────────────────────────────────────
+// The iOS and Android apps show this same site in a web view, and Google
+// refuses to sign anyone in from a web view ("disallowed_useragent"); Apple
+// expects its own sheet in an iPhone app. So in the app, Google and Apple go
+// through the native sign-in plugin (@capacitor-firebase/authentication, in
+// the app's native build) and hand the result to this SDK with
+// signInWithCredential — one Firebase account, whichever way in.
+// The site changes the moment it deploys but a store app only when it is
+// updated, so an older app without the plugin is detected and offered only
+// what works in it: email and password. (An emailed sign-in link opens in
+// the phone's browser, not the app, so it is left out of the app too.)
+const inApp = () => { try { return Capacitor.isNativePlatform(); } catch (e) { return false; } };
+const platform = () => { try { return Capacitor.getPlatform(); } catch (e) { return 'web'; } };
+let NativeAuth = null;
+const nativeAuth = () => {
+  if (!inApp()) return null;
+  try { if (!Capacitor.isPluginAvailable('FirebaseAuthentication')) return null; } catch (e) { return null; }
+  if (!NativeAuth) NativeAuth = registerPlugin('FirebaseAuthentication');
+  return NativeAuth;
+};
+// What can be offered here. In the iPhone app: Google, Apple and password
+// with the plugin; Android: Google and password (Apple is an iPhone matter).
+const methodsHere = (all) => {
+  if (!inApp()) return all;
+  const native = !!nativeAuth();
+  return all.filter((m) => m === 'password'
+    || (native && m === 'google')
+    || (native && m === 'apple' && platform() === 'ios'));
+};
+// A Google or Apple credential from the native sheet, for this SDK.
+// `code` is Apple's authorisation code, which deleting an account revokes.
+async function nativeCredential(which) {
+  const NA = nativeAuth();
+  let r;
+  try {
+    r = which === 'apple'
+      ? await NA.signInWithApple({ skipNativeAuth: true, scopes: ['email', 'name'] })
+      : await NA.signInWithGoogle({ skipNativeAuth: true });
+  } catch (e) {
+    // Closing the native sheet is not an error worth a red message.
+    if (/cancel/i.test(String((e && (e.message || e.code)) || ''))) { const c = new Error('closed'); c.code = 'auth/popup-closed-by-user'; throw c; }
+    throw e;
+  }
+  const c = (r && r.credential) || {};
+  if (which === 'apple') {
+    return { cred: new FA.OAuthProvider('apple.com').credential({ idToken: c.idToken, rawNonce: c.nonce }), code: c.authorizationCode || '' };
+  }
+  return { cred: FA.GoogleAuthProvider.credential(c.idToken, c.accessToken), code: '' };
+}
 
 // firebase/auth is pulled in by install() rather than at the top of this file,
 // so a member who never opens the Lessons tab never downloads the auth SDK.
@@ -79,7 +130,8 @@ const provider = {
   // the provider directly and does not consult this.
   enabled: SIGN_IN_LIVE,
   ready: false,
-  methods: SIGN_IN_METHODS,
+  methods: methodsHere(SIGN_IN_METHODS),
+  inApp: inApp(),
   fixedAdmins: FIXED_ADMIN_EMAILS,
   user: null,
   role: 'anon',
@@ -145,6 +197,7 @@ const provider = {
   },
   async signInWithGoogle() {
     needAuth();
+    if (nativeAuth()) { await FA.signInWithCredential(fbAuth, (await nativeCredential('google')).cred); return; }
     const p = new FA.GoogleAuthProvider();
     // Always offer the account chooser: people share iPads at the club.
     p.setCustomParameters({ prompt: 'select_account' });
@@ -158,10 +211,8 @@ const provider = {
   },
   async signInWithApple() {
     needAuth();
-    const p = new FA.OAuthProvider('apple.com');
-    p.addScope('email'); p.addScope('name');
-    p.setCustomParameters({ locale: 'en_GB' });
-    await popupOrRedirect(p);
+    if (nativeAuth()) { await FA.signInWithCredential(fbAuth, (await nativeCredential('apple')).cred); return; }
+    await popupOrRedirect(appleProvider());
   },
   async signOut() {
     needAuth();
@@ -180,7 +231,8 @@ const provider = {
       : which === 'apple' ? new FA.OAuthProvider('apple.com')
       : null;
     if (!p) throw new Error('That sign-in method cannot be added.');
-    await FA.linkWithPopup(fbAuth.currentUser, p);
+    if (nativeAuth() && (which === 'google' || which === 'apple')) await FA.linkWithCredential(fbAuth.currentUser, (await nativeCredential(which)).cred);
+    else await FA.linkWithPopup(fbAuth.currentUser, p);
     provider.user = snapshotUser(fbAuth.currentUser);
     announceAuthChange();
   },
@@ -263,6 +315,49 @@ const provider = {
     provider.profile = { ...(provider.profile || {}), photo: value };
     announceAuthChange();
   },
+  // ── Deleting the account ───────────────────────────────────────────────
+  // The app stores require a member to be able to delete their account from
+  // inside the app. Firebase deletes only an account that has just signed in,
+  // so the member confirms who they are first: their password, or Google or
+  // Apple again. For Apple that fresh sign-in also gives the token Apple
+  // requires to be revoked when an account is deleted.
+  //   before(uid)  runs once they are confirmed and before anything goes —
+  //                the app unlinks the club's player record (which stays: it
+  //                is the club's) and drops the account's notifications.
+  // Where no pop-up can open (the Home Screen app), the confirm is a redirect
+  // and the page leaves; on the way back `pendingDelete` is set and the app
+  // calls this again, with no password, to finish.
+  async deleteAccount({ password, before } = {}) {
+    needAuth();
+    const u = fbAuth.currentUser;
+    if (!u || u.isAnonymous) throw new Error('Sign in first.');
+    if (pendingDeleteResult && pendingDeleteResult.user.uid === u.uid) {
+      const r = pendingDeleteResult;
+      pendingDeleteResult = null; provider.pendingDelete = false;
+      return finishDelete(u, r, before);
+    }
+    const ids = (u.providerData || []).map((d) => d && d.providerId);
+    let result = null;
+    if (password) {
+      if (!u.email) throw new Error('This account has no email address.');
+      result = await FA.reauthenticateWithCredential(u, FA.EmailAuthProvider.credential(u.email, String(password)));
+    } else if (nativeAuth() && (ids.includes('apple.com') || ids.includes('google.com'))) {
+      // In the app: confirm with the native sheet, then revoke Apple's token
+      // through the plugin with the code that sheet gives.
+      const which = ids.includes('apple.com') && platform() === 'ios' ? 'apple' : 'google';
+      const { cred, code } = await nativeCredential(which);
+      result = await FA.reauthenticateWithCredential(u, cred);
+      if (code) result.appleCode = code;
+    } else if (ids.includes('apple.com')) {
+      result = await reauthSocial(u, appleProvider());
+    } else if (ids.includes('google.com')) {
+      result = await reauthSocial(u, new FA.GoogleAuthProvider());
+    } else {
+      throw new Error('Enter your password to confirm.');
+    }
+    if (!result) return; // gone to a redirect; finished on the way back
+    return finishDelete(u, result, before);
+  },
   async listAdmins() {
     needAuth();
     const snap = await getDoc(doc(db, ...ADMINS_DOC));
@@ -275,27 +370,66 @@ const provider = {
   },
 };
 
+const appleProvider = () => {
+  const p = new FA.OAuthProvider('apple.com');
+  p.addScope('email'); p.addScope('name');
+  p.setCustomParameters({ locale: 'en_GB' });
+  return p;
+};
+
+// An installed PWA on iOS has no pop-up to open; it goes straight to redirect.
+const isStandalone = () => !!((window.navigator && window.navigator.standalone)
+  || window.matchMedia('(display-mode: standalone)').matches);
+const POPUP_REFUSED = ['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment', 'auth/cancelled-popup-request'];
+
 // Pop-ups are the quicker path and work on desktop and most phones; where the
 // browser refuses one (in-app browsers, some iOS setups) fall back to a full
 // redirect, which getRedirectResult() completes on the way back.
 async function popupOrRedirect(p) {
-  // An installed PWA on iOS has no pop-up to open; go straight to redirect.
-  const standalone = (window.navigator && window.navigator.standalone)
-    || window.matchMedia('(display-mode: standalone)').matches;
-  if (standalone) { markRedirect(); await FA.signInWithRedirect(fbAuth, p); return; }
+  if (isStandalone()) { markRedirect(); await FA.signInWithRedirect(fbAuth, p); return; }
   try {
     await FA.signInWithPopup(fbAuth, p);
   } catch (e) {
     const code = e && e.code;
-    if (code === 'auth/popup-blocked'
-      || code === 'auth/operation-not-supported-in-this-environment'
-      || code === 'auth/cancelled-popup-request') {
+    if (POPUP_REFUSED.includes(code)) {
       markRedirect();
       await FA.signInWithRedirect(fbAuth, p);
       return;
     }
     throw e;
   }
+}
+
+// Confirm the signed-in member with Google or Apple again, for deleting the
+// account: a pop-up where one can open, else a redirect (null here; the next
+// load picks it up — see installClubAuth).
+const DELETE_KEY = 'polo-delete-pending';
+let pendingDeleteResult = null;
+async function reauthSocial(u, p) {
+  if (!isStandalone()) {
+    try { return await FA.reauthenticateWithPopup(u, p); }
+    catch (e) { if (!POPUP_REFUSED.includes(e && e.code)) throw e; }
+  }
+  try { sessionStorage.setItem(DELETE_KEY, '1'); } catch (e) { /* ignore */ }
+  markRedirect();
+  await FA.reauthenticateWithRedirect(u, p);
+  return null;
+}
+
+async function finishDelete(u, result, before) {
+  if (before) await before(u.uid);
+  // Apple: revoke the account's tokens, as Apple requires on deletion. A
+  // failure here does not stop the deletion — the account is going anyway.
+  if (result && result.appleCode && nativeAuth()) {
+    await nativeAuth().revokeAccessToken({ token: result.appleCode }).catch((e) => console.warn('Apple token not revoked', e));
+  } else if (result && result.providerId === 'apple.com') {
+    const cred = FA.OAuthProvider.credentialFromResult(result);
+    if (cred && cred.accessToken) await FA.revokeAccessToken(fbAuth, cred.accessToken).catch((e) => console.warn('Apple token not revoked', e));
+  }
+  await deleteDoc(doc(db, 'users', u.uid)).catch(() => {});
+  await FA.deleteUser(u);
+  provider.deleted = true;
+  announceAuthChange();
 }
 
 // A redirect sign-in leaves the app entirely and comes back to a cold start,
@@ -398,6 +532,15 @@ export function installClubAuth() {
     await FA.setPersistence(fbAuth, FA.browserLocalPersistence).catch(() => {});
     watchAdmins();
     FA.getRedirectResult(fbAuth)
+      .then((res) => {
+        let deleting = false;
+        try { deleting = sessionStorage.getItem(DELETE_KEY) === '1'; sessionStorage.removeItem(DELETE_KEY); } catch (e) { /* ignore */ }
+        // Back from confirming who they are, to delete the account: the app
+        // sees pendingDelete and finishes it (deleteAccount).
+        if (deleting && res && res.operationType === 'reauthenticate') {
+          pendingDeleteResult = res; provider.pendingDelete = true; announceAuthChange();
+        }
+      })
       .catch((e) => console.error('Redirect sign-in failed', e))
       .finally(clearRedirect);
     completeLinkSignIn();

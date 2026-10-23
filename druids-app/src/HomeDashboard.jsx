@@ -419,7 +419,7 @@ function ManageSheet({ m, onAmend, onCancel, onClose, onOpenTerms }) {
   );
 }
 
-function ProfileSheet({ account, profile, me, handicapOptions, onSave, onChangePassword, onResetEmail, onLinkProvider, onSignOut, onPhoto, onClose }) {
+function ProfileSheet({ account, profile, me, handicapOptions, onSave, onChangePassword, onResetEmail, onLinkProvider, onSignOut, onPhoto, onClose, onDeleteAccount, onOpenPrivacy, onOpenTerms, methods = ['google', 'apple'] }) {
   const p = profile || {};
   const [draft, setDraft] = useState({
     name: p.name || (me && me.name) || account.name || '',
@@ -428,6 +428,8 @@ function ProfileSheet({ account, profile, me, handicapOptions, onSave, onChangeP
     hpa: p.hpa || '',
   });
   const [pw, setPw] = useState({ a: '', b: '' });
+  // Delete my account: closed, then open (what it does, and how to confirm).
+  const [del, setDel] = useState({ open: false, password: '' });
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState({ kind: '', text: '' });
   const headRef = useRef(null);
@@ -460,6 +462,16 @@ function ProfileSheet({ account, profile, me, handicapOptions, onSave, onChangeP
     if (pw.a.length < 8) { setMsg({ kind: 'err', text: 'Use at least 8 characters.' }); return; }
     if (pw.a !== pw.b) { setMsg({ kind: 'err', text: 'The two passwords don\u2019t match.' }); return; }
     if (await run('pw', () => onChangePassword(pw.a), hasPassword ? 'Password changed.' : 'Password added \u2014 you can now sign in with your email too.')) setPw({ a: '', b: '' });
+  };
+
+  // How this account can confirm a delete here: its password, or Google or
+  // Apple again where this copy of the app can offer them.
+  const social = providers.includes('apple.com') && methods.includes('apple') ? 'Apple'
+    : providers.includes('google.com') && methods.includes('google') ? 'Google' : '';
+  const canConfirm = hasPassword || !!social;
+  const deleteNow = () => {
+    if (hasPassword && !social && !del.password) { setMsg({ kind: 'err', text: 'Enter your password to confirm.' }); return; }
+    run('delete', () => onDeleteAccount({ password: hasPassword && (del.password || !social) ? del.password : '' }), 'Your account has been deleted.');
   };
 
   return (
@@ -523,14 +535,54 @@ function ProfileSheet({ account, profile, me, handicapOptions, onSave, onChangeP
             {providers.map(x => <span key={x} className="hd-pill hd-pill-ok" style={{ fontSize: 12, padding: '6px 12px' }}>{PROVIDER_NAMES[x] || x}</span>)}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
-            {!providers.includes('google.com') && <button type="button" className="hd-btn" disabled={!!busy} onClick={() => run('google', () => onLinkProvider('google'), 'Google added \u2014 either will sign you in.')}>Add Google</button>}
-            {!providers.includes('apple.com') && <button type="button" className="hd-btn" disabled={!!busy} onClick={() => run('apple', () => onLinkProvider('apple'), 'Apple added \u2014 either will sign you in.')}>Add Apple</button>}
+            {!providers.includes('google.com') && methods.includes('google') && <button type="button" className="hd-btn" disabled={!!busy} onClick={() => run('google', () => onLinkProvider('google'), 'Google added \u2014 either will sign you in.')}>Add Google</button>}
+            {!providers.includes('apple.com') && methods.includes('apple') && <button type="button" className="hd-btn" disabled={!!busy} onClick={() => run('apple', () => onLinkProvider('apple'), 'Apple added \u2014 either will sign you in.')}>Add Apple</button>}
           </div>
 
           {msg.text && <div role={msg.kind === 'err' ? 'alert' : 'status'} style={{ marginTop: 16, fontSize: 14, lineHeight: 1.5, color: msg.kind === 'err' ? '#f0b9b9' : '#cfe3b8' }}>{msg.text}</div>}
 
           <div style={{ borderTop: '1px solid var(--hd-line)', margin: '26px 0 12px' }} />
-          <button type="button" className="hd-btn" style={{ width: '100%', marginBottom: 24 }} onClick={() => { onClose(); onSignOut(); }}>Sign out</button>
+          <button type="button" className="hd-btn" style={{ width: '100%', marginBottom: 16 }} onClick={() => { onClose(); onSignOut(); }}>Sign out</button>
+
+          {(onOpenPrivacy || onOpenTerms) && (
+            <div className="hd-row" style={{ justifyContent: 'center', gap: 16, fontSize: 13, flexWrap: 'wrap' }}>
+              {onOpenPrivacy && <button type="button" className="hd-link" onClick={onOpenPrivacy} style={{ minHeight: 40 }}>Privacy notice</button>}
+              {onOpenTerms && <button type="button" className="hd-link" onClick={onOpenTerms} style={{ minHeight: 40 }}>Booking terms</button>}
+            </div>
+          )}
+
+          {onDeleteAccount && (
+            <div style={{ borderTop: '1px solid var(--hd-line)', marginTop: 14, paddingTop: 14, marginBottom: 28 }}>
+              {!del.open ? (
+                <button type="button" className="hd-link" onClick={() => setDel({ open: true, password: '' })} style={{ minHeight: 40, fontSize: 13, color: '#f0b9b9' }}>Delete my account</button>
+              ) : (
+                <div role="group" aria-labelledby="hd-del-title">
+                  <div id="hd-del-title" className="hd-serif" style={{ fontSize: 19, color: '#f0b9b9' }}>Delete my account</div>
+                  <p style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--hd-muted)', margin: '8px 0 10px' }}>
+                    This deletes your sign-in, your profile and picture, and your notifications, straight away and for good. Your bookings and the club’s record of you as a player stay with the club, as the privacy notice explains; email the club to have those deleted too. You can make a new account at any time.
+                  </p>
+                  {hasPassword && (
+                    <>
+                      <label htmlFor="hd-del-pw" style={{ display: 'block', fontSize: 13, color: 'var(--hd-muted)', marginBottom: 6 }}>{social ? `Your password (or leave it blank and confirm with ${social})` : 'Your password, to confirm'}</label>
+                      <input id="hd-del-pw" type="password" autoComplete="current-password" style={fld} value={del.password} onChange={(e) => setDel(d => ({ ...d, password: e.target.value }))} />
+                    </>
+                  )}
+                  {!canConfirm && (
+                    <p style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--hd-cream)', margin: '0 0 10px' }}>
+                      This app can’t confirm a Google or Apple account. Open {typeof window !== 'undefined' ? window.location.host : 'the club’s site'} in your phone’s browser to delete it there, or email the club and we will do it for you.
+                    </p>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: canConfirm ? '1fr 1fr' : '1fr', gap: 10, marginTop: 12 }}>
+                    <button type="button" className="hd-btn" disabled={busy === 'delete'} onClick={() => setDel({ open: false, password: '' })}>Keep it</button>
+                    {canConfirm && <button type="button" className="hd-btn" disabled={busy === 'delete'} onClick={deleteNow}
+                      style={{ borderColor: '#f0b9b9', color: '#f0b9b9' }}>
+                      {busy === 'delete' ? 'Deleting…' : hasPassword && (del.password || !social) ? 'Delete for good' : `Confirm with ${social}`}
+                    </button>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -541,12 +593,14 @@ function ProfileSheet({ account, profile, me, handicapOptions, onSave, onChangeP
 // Home is the way in. Booking chukkas and lessons, your draw and what you owe
 // need you signed in; the fixtures and the live scores are open to anyone, and
 // their tabs stay in the bar for exactly that.
-function Logon({ onSignIn, openFixtures, openLive }) {
+function Logon({ onSignIn, openFixtures, openLive, deleted, onOpenPrivacy, onOpenTerms, methods = ['google', 'apple', 'password'] }) {
+  const ways = [methods.includes('google') && 'Google', methods.includes('apple') && 'Apple'].filter(Boolean);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', paddingTop: '6px' }}>
       <div className="hd-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '12px' }}>
         <Crest size={120} />
         <div className="hd-eyebrow" style={{ marginTop: '8px' }}>{TERMS_CLUB.name}</div>
+        {deleted && <div role="status" className="hd-card" style={{ padding: '10px 14px', fontSize: '14px', color: 'var(--hd-cream)' }}>Your account has been deleted.</div>}
         <h2 className="hd-serif" style={{ fontSize: '32px', fontWeight: 500, lineHeight: 1.12, margin: 0 }}>Welcome back</h2>
         <p style={{ fontSize: '14px', color: 'var(--hd-muted)', maxWidth: '320px', lineHeight: 1.55, margin: 0 }}>
           Sign in to book chukkas and lessons, see your team when the draw is out, and keep track of what you owe.
@@ -558,13 +612,19 @@ function Logon({ onSignIn, openFixtures, openLive }) {
           <Icon d={I.lock} stroke="var(--hd-gold2)" />New here? Create an account
         </button>
         <div style={{ fontSize: '12px', color: 'var(--hd-dim)', textAlign: 'center', lineHeight: 1.5 }}>
-          Google, Apple or your email. Use the email the club has for you and we&rsquo;ll find your record.
+          {ways.length ? `${ways.join(', ')} or your email.` : 'Your email and a password.'} Use the email the club has for you and we&rsquo;ll find your record.
         </div>
       </div>
       <div className="hd-in" style={{ '--d': '.24s', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '8px' }}>
         <button type="button" className="hd-btn" onClick={openFixtures}><Icon d={I.cal} stroke="var(--hd-gold2)" />Fixtures</button>
         <button type="button" className="hd-btn" onClick={openLive}><Icon d={I.live} stroke="var(--hd-gold2)" />Live scores</button>
       </div>
+      {(onOpenPrivacy || onOpenTerms) && (
+        <div className="hd-row" style={{ justifyContent: 'center', gap: '16px', fontSize: '12px', color: 'var(--hd-dim)' }}>
+          {onOpenPrivacy && <button type="button" className="hd-link" onClick={onOpenPrivacy} style={{ fontSize: '12px', minHeight: '40px' }}>Privacy notice</button>}
+          {onOpenTerms && <button type="button" className="hd-link" onClick={onOpenTerms} style={{ fontSize: '12px', minHeight: '40px' }}>Booking terms</button>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1428,6 +1488,11 @@ export default function HomeDashboard(props) {
     // An email's "Amend or cancel" link: the booking to show (null when there
     // is none, or nobody is signed in yet) and whether one is waiting on sign-in.
     manage, manageWaiting, onManageAmend, onManageCancel, onManageClose, onOpenTerms,
+    // Your profile: delete the account; the privacy notice.
+    onDeleteAccount, onOpenPrivacy, accountDeleted = false,
+    // The ways in this copy of the app offers (window.auth.methods): the
+    // store apps without native sign-in offer email and password only.
+    signInMethods = ['google', 'apple', 'password', 'link'],
   } = props;
   const [booking, setBooking] = useState(null); // the day the sheet opened on
   const [entering, setEntering] = useState(false); // the Enter a tournament walk-through
@@ -1458,7 +1523,7 @@ export default function HomeDashboard(props) {
               Sign in to amend or cancel your booking &mdash; it opens as soon as you&rsquo;re in.
             </div>
           )}
-          <Logon onSignIn={onSignIn} openFixtures={openFixtures} openLive={openLive} />
+          <Logon onSignIn={onSignIn} openFixtures={openFixtures} openLive={openLive} deleted={accountDeleted} onOpenPrivacy={onOpenPrivacy} onOpenTerms={onOpenTerms} methods={signInMethods} />
         </div>
       </div>
     );
@@ -1592,10 +1657,11 @@ export default function HomeDashboard(props) {
         </div>
       </div>
 
-      {profileOpen && (
+      {profileOpen && account && (
         <ProfileSheet account={account} profile={profile} me={me} handicapOptions={handicapOptions}
           onSave={onSaveProfile} onChangePassword={onChangePassword} onResetEmail={onResetEmail}
           onLinkProvider={onLinkProvider} onSignOut={onSignOut} onPhoto={() => setPhotoOpen(true)}
+          onDeleteAccount={onDeleteAccount} onOpenPrivacy={onOpenPrivacy} onOpenTerms={onOpenTerms} methods={signInMethods}
           onClose={() => setProfileOpen(false)} />
       )}
 
