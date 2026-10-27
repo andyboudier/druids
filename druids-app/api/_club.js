@@ -18,7 +18,7 @@ import { TERMS_CLUB } from '../src/terms.js';
 
 export const CLUB = TERMS_CLUB;
 export const CREST = { src: '/icon-192.png', round: false };
-export const PROJECT = { projectId: 'druids-lodge-polo', apiKey: '' };
+export const PROJECT = { projectId: 'druids-lodge-polo', apiKey: 'AIzaSyCjY5hYuctqdNz-xMgCA-BqieMoXtuTK7U' };
 export const APP_URL = 'https://druids.poloact.co.uk';
 
 export const DAYS = {

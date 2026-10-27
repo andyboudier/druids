@@ -22,7 +22,7 @@
 
 import {
   DAYS, storageKey, longDate, londonParts, makeReader, projectOf, recordFor, json, crestImg, signOff, settings, CLUB,
-  esc, firstName, normEmail, normName, SESSION_NAMES,
+  esc, firstName, normEmail, normName, SESSION_NAMES, resendId,
 } from './_reminders.js';
 
 const FRESH_MS = 15 * 60 * 1000; // a "booked" or "amended" email is for a change just made
@@ -244,5 +244,5 @@ export async function sendBookingEmail({ req, idToken, env, fetchImpl = fetch, n
     body: JSON.stringify({ from, to: [to], subject: mail.subject, html: mail.html, text: mail.text }),
   });
   if (!r.ok) return { status: 502, body: { sent: false, why: `Resend ${r.status}` } };
-  return { status: 200, body: { sent: true } };
+  return { status: 200, body: { sent: true, id: await resendId(r) } };
 }
