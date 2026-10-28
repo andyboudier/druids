@@ -44,6 +44,52 @@ for p in app splash-screen status-bar local-notifications push-notifications ios
   fi
 done
 
+# Native Google/Apple sign-in needs the club's Firebase config for the iOS
+# app. Without it the sign-in plugin cannot start and the app would crash at
+# launch, so stop the build here with a clear message instead. The plist
+# lives in ios/App/firebase/live/ and is copied into the app.
+SRC="ios/App/firebase/live/GoogleService-Info.plist"
+GSI="ios/App/App/GoogleService-Info.plist"
+if [ ! -f "$SRC" ]; then
+  echo "ERROR: $SRC is missing. Download GoogleService-Info.plist for the iOS app uk.co.druidspolo.poloact from the club's Firebase project and commit it there. See docs/NATIVE_SIGN_IN.md." >&2
+  exit 1
+fi
+cp "$SRC" "$GSI"
+# Google Sign-In returns to the app through a URL scheme: the reversed client
+# ID from that file. Add it to Info.plist if it is not there yet.
+REVERSED=$(/usr/libexec/PlistBuddy -c "Print :REVERSED_CLIENT_ID" "$GSI")
+INFO="ios/App/App/Info.plist"
+if ! /usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "$INFO" 2>/dev/null | grep -q "$REVERSED"; then
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$INFO" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$INFO"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$INFO"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string $REVERSED" "$INFO"
+  echo "Added Google Sign-In URL scheme to Info.plist"
+fi
+
 # Build the web bundle, then sync web assets + plugin/SPM wiring into iOS.
 npm run build
 npx cap sync ios
+
+# Xcode Cloud resolves Swift packages with automatic resolution switched off,
+# so Package.resolved must already list every package the app uses — and
+# `cap sync` above may have just changed them (the native sign-in plugin
+# brings Firebase and Google Sign-In). Write it afresh here, on Apple's own
+# toolchain, before Xcode Cloud checks it.
+# Xcode Cloud also switches automatic resolution off machine-wide, which
+# would stop this resolve too, so lift that for this one step; its own
+# dependency check afterwards still runs with resolution off, against the
+# file written here.
+RESOLVED="ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+defaults delete com.apple.dt.Xcode IDEPackageOnlyUseVersionsFromResolvedFile 2>/dev/null || true
+defaults delete com.apple.dt.Xcode IDEDisableAutomaticPackageResolution 2>/dev/null || true
+cp "$RESOLVED" "$RESOLVED.bak" 2>/dev/null || true
+rm -f "$RESOLVED"
+if ! xcodebuild -resolvePackageDependencies -project ios/App/App.xcodeproj -scmProvider system; then
+  echo "ERROR: resolving the Swift packages failed (see above)." >&2
+  [ -f "$RESOLVED.bak" ] && mv "$RESOLVED.bak" "$RESOLVED"
+  exit 1
+fi
+rm -f "$RESOLVED.bak"
+echo "--- Package.resolved ---"
+grep -o '"identity" : "[^"]*"' "$RESOLVED" || true
