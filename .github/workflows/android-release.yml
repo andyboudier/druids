@@ -65,6 +65,18 @@ jobs:
       - name: Capacitor sync (Android)
         run: npx cap sync android
 
+      # Native Google sign-in needs the club's Firebase config for the Android
+      # app; without it the sign-in plugin fails when the app starts. Stop
+      # here with a clear message instead of shipping that.
+      - name: Check the Firebase config for native sign-in
+        run: |
+          SRC="android/firebase/live/google-services.json"
+          if [ ! -f "$SRC" ]; then
+            echo "::error::$SRC is missing. Download google-services.json for the Android app uk.co.druidspolo.poloact from the club's Firebase project and commit it there. See docs/NATIVE_SIGN_IN.md."
+            exit 1
+          fi
+          cp "$SRC" android/app/google-services.json
+
       - name: Decode upload keystore
         run: |
           echo "$DLPC_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks

@@ -49,6 +49,33 @@ const config: CapacitorConfig = {
     FirebaseMessaging: {
       presentationOptions: ['badge', 'sound', 'alert'],
     },
+    // Native Google and Apple sign-in (@capacitor-firebase/authentication).
+    // The app's web layer keeps the Firebase account: the plugin only fetches
+    // the credential (skipNativeAuth) and src/authFirebase.js signs in with
+    // it. Google refuses sign-in from inside a web view, so without this the
+    // store apps can offer email and password only. Needs
+    // ios/App/App/GoogleService-Info.plist and android/app/google-services.json
+    // from the club's Firebase project — see docs/NATIVE_SIGN_IN.md.
+    FirebaseAuthentication: {
+      skipNativeAuth: true,
+      providers: ['google.com', 'apple.com'],
+    },
+  },
+  experimental: {
+    ios: {
+      spm: {
+        swiftToolsVersion: '6.1',
+        // Avoids a Swift package identity clash with the plugin's own
+        // package name (capawesome-team/capacitor-firebase#959).
+        packageOptions: {
+          '@capacitor-firebase/authentication': { symlink: true },
+        },
+        // Google Sign-In only: leave the Facebook SDK out of the app.
+        packageTraits: {
+          '@capacitor-firebase/authentication': ['Google'],
+        },
+      },
+    },
   },
 };
 

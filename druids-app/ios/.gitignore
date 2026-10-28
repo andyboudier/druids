@@ -11,3 +11,7 @@ capacitor-cordova-ios-plugins
 # Generated Config files
 App/App/capacitor.config.json
 App/App/config.xml
+App/CapApp-SPM/symlinks
+
+# Copied in at build time from ios/App/firebase/live/ (ci_post_clone.sh)
+App/App/GoogleService-Info.plist
